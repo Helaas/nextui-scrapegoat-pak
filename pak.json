@@ -1,0 +1,16 @@
+{
+  "name": "ScrapeGoat",
+  "version": "v1.0.0",
+  "type": "TOOL",
+  "description": "Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your ROM library.",
+  "author": "Helaas",
+  "repo_url": "https://github.com/Helaas/nextui-scrapegoat-pak",
+  "release_filename": "ScrapeGoat.pakz",
+  "changelog": {
+    "v1.0.0": "Initial release: ScreenScraper.fr artwork scraping, Libretro cheat downloading, shortcut bg.png regeneration."
+  },
+  "platforms": [
+    "tg5040",
+    "tg5050"
+  ]
+}
