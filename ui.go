@@ -71,7 +71,7 @@ func scrapeArtworkFlow() {
 	}
 
 	// Step 2: Pick a console (only show systems with a ScreenScraper ID)
-	console, ok := pickConsoleForScraping()
+	console, ok := pickConsoleForScraping(settings)
 	if !ok {
 		return
 	}
@@ -82,26 +82,40 @@ func scrapeArtworkFlow() {
 		return
 	}
 
-	// Step 4: Scrape with progress bar
+	// Step 4: Scrape with progress bar and live stats HUD
 	var progress atomic.Float64
 	progress.Store(0.0)
+
+	var interruptSignal atomic.Int32
+	var dynMsg atomic.String
 
 	modeDesc := "all ROMs"
 	if missingOnly {
 		modeDesc = "ROMs without artwork"
 	}
 	title := fmt.Sprintf("Scraping %s (%s)...", console.Display, modeDesc)
+	dynMsg.Store(title) // shown immediately while the first ROM is being fetched
 
 	summary, err := gaba.ProcessMessage(title,
 		gaba.ProcessMessageOptions{
 			ShowThemeBackground: true,
 			ShowProgressBar:     true,
 			Progress:            &progress,
+			DynamicMessage:      &dynMsg,
+			InterruptButton:     constants.VirtualButtonY,
+			InterruptSignal:     &interruptSignal,
+			FooterHelpItems: []gaba.FooterHelpItem{
+				{ButtonName: "Y", HelpText: "Stop & Install"},
+			},
 		},
 		func() (ScrapeSummary, error) {
 			return scrapeConsole(console, missingOnly, settings,
+				&interruptSignal,
 				func(p float64) { progress.Store(p) },
-				func(msg string) { log.Printf("scrape: %s", msg) },
+				func(msg string) {
+					dynMsg.Store(msg)
+					log.Printf("scrape: %s", msg)
+				},
 			)
 		},
 	)
@@ -117,8 +131,8 @@ func scrapeArtworkFlow() {
 }
 
 // pickConsoleForScraping shows only systems that have a ScreenScraper platform ID.
-func pickConsoleForScraping() (ConsoleDir, bool) {
-	consoles, err := scanConsoleDirs()
+func pickConsoleForScraping(settings AppSettings) (ConsoleDir, bool) {
+	consoles, err := scanConsoleDirs(settings.ShowHidden)
 	if err != nil {
 		logError("scanning consoles", err)
 		showError("Could not read ROM folders.")
@@ -201,8 +215,10 @@ func showScrapeSummary(s ScrapeSummary) {
 // ── Download Cheats flow ─────────────────────────────────────
 
 func downloadCheatsFlow() {
+	settings := loadSettings()
+
 	// Step 1: Pick a console (only show systems with libretro cheats)
-	console, ok := pickConsoleForCheats()
+	console, ok := pickConsoleForCheats(settings)
 	if !ok {
 		return
 	}
@@ -236,8 +252,8 @@ func downloadCheatsFlow() {
 }
 
 // pickConsoleForCheats shows only systems that have a libretro cheat directory.
-func pickConsoleForCheats() (ConsoleDir, bool) {
-	consoles, err := scanConsoleDirs()
+func pickConsoleForCheats(settings AppSettings) (ConsoleDir, bool) {
+	consoles, err := scanConsoleDirs(settings.ShowHidden)
 	if err != nil {
 		logError("scanning consoles", err)
 		showError("Could not read ROM folders.")
@@ -307,10 +323,16 @@ func showSettingsScreen() {
 			passwordDisplay = "<set>"
 		}
 
+		showHiddenDisplay := "Off"
+		if settings.ShowHidden {
+			showHiddenDisplay = "On"
+		}
+
 		items := []gaba.MenuItem{
 			{Text: fmt.Sprintf("Username: %s", usernameDisplay)},
 			{Text: fmt.Sprintf("Password: %s", passwordDisplay)},
 			{Text: "Artwork Options..."},
+			{Text: fmt.Sprintf("Include hidden/disabled: %s", showHiddenDisplay)},
 		}
 
 		opts := gaba.DefaultListOptions("Settings", items)
@@ -334,6 +356,9 @@ func showSettingsScreen() {
 			editPassword(&settings)
 		case 2:
 			editArtworkOptions(&settings)
+		case 3:
+			settings.ShowHidden = !settings.ShowHidden
+			logError("saving settings", saveSettings(settings))
 		}
 	}
 }
@@ -358,57 +383,46 @@ func editPassword(settings *AppSettings) {
 
 func editArtworkOptions(settings *AppSettings) {
 	for {
-		// Build current priority summary for display.
-		types := settings.ArtworkTypes()
-		// Show top 3 types as summary (all types are always active).
-		prioSummary := ""
-		for i, t := range types {
+		// Build artwork priority summary (top 3 types).
+		artSummary := ""
+		for i, t := range settings.ArtworkTypes() {
 			if i >= 3 {
-				prioSummary += " → …"
+				artSummary += " → …"
 				break
 			}
 			if i > 0 {
-				prioSummary += " → "
+				artSummary += " → "
 			}
-			prioSummary += MediaTypeDisplay(t)
+			artSummary += MediaTypeDisplay(t)
 		}
 
-		regionIdx := 0
-		switch settings.Region {
-		case "eu":
-			regionIdx = 1
-		case "jp":
-			regionIdx = 2
-		case "wor":
-			regionIdx = 3
+		// Build region priority summary (top 3 regions).
+		regionSummary := ""
+		for i, r := range settings.RegionTypes() {
+			if i >= 3 {
+				regionSummary += " → …"
+				break
+			}
+			if i > 0 {
+				regionSummary += " → "
+			}
+			regionSummary += RegionDisplay(r)
 		}
 
 		items := []gaba.ItemWithOptions{
 			{
 				Item: gaba.MenuItem{Text: "Artwork priority"},
 				Options: []gaba.Option{
-					{DisplayName: prioSummary, Value: "edit", Type: gaba.OptionTypeClickable},
+					{DisplayName: artSummary, Value: "edit", Type: gaba.OptionTypeClickable},
 				},
 				SelectedOption: 0,
 			},
 			{
-				Item: gaba.MenuItem{Text: "Region"},
+				Item: gaba.MenuItem{Text: "Region priority"},
 				Options: []gaba.Option{
-					{DisplayName: "US", Value: "us"},
-					{DisplayName: "EU", Value: "eu"},
-					{DisplayName: "JP", Value: "jp"},
-					{DisplayName: "World", Value: "wor"},
+					{DisplayName: regionSummary, Value: "edit", Type: gaba.OptionTypeClickable},
 				},
-				SelectedOption: regionIdx,
-			},
-			{
-				Item: gaba.MenuItem{Text: "Background mode"},
-				Options: []gaba.Option{
-					{DisplayName: "Art on Black", Value: ArtworkModeBlack},
-					{DisplayName: "Art on Wallpaper", Value: ArtworkModeWallpaper},
-					{DisplayName: "Wallpaper (fallback)", Value: ArtworkModeFallback},
-				},
-				SelectedOption: settings.ArtworkMode,
+				SelectedOption: 0,
 			},
 		}
 
@@ -416,9 +430,8 @@ func editArtworkOptions(settings *AppSettings) {
 			ConfirmButton: constants.VirtualButtonStart,
 			FooterHelpItems: []gaba.FooterHelpItem{
 				{ButtonName: "B", HelpText: "Back"},
-				{ButtonName: "←/→", HelpText: "Change"},
-				{ButtonName: "A", HelpText: "Select"},
-				{ButtonName: "START", HelpText: "Save"},
+				{ButtonName: "A", HelpText: "Edit"},
+				{ButtonName: "START", HelpText: "Done"},
 			},
 		}
 
@@ -434,18 +447,18 @@ func editArtworkOptions(settings *AppSettings) {
 			return
 		}
 
-		// If user pressed A on "Artwork priority" (clickable), open the priority editor.
-		if result.Action == gaba.ListActionSelected && result.Selected == 0 {
-			editArtworkPriority(settings)
-			continue // re-render to show updated summary
+		if result.Action == gaba.ListActionSelected {
+			switch result.Selected {
+			case 0:
+				editArtworkPriority(settings)
+			case 1:
+				editRegionPriority(settings)
+			}
+			continue // re-render to show updated summaries
 		}
 
-		// Save region & background mode.
-		settings.Region, _ = result.Items[1].Options[result.Items[1].SelectedOption].Value.(string)
-		settings.ArtworkMode, _ = result.Items[2].Options[result.Items[2].SelectedOption].Value.(int)
-		log.Printf("ui: artwork options saved: region=%s mode=%d prio=%v",
-			settings.Region, settings.ArtworkMode, settings.ArtworkPrio)
-		logError("saving settings", saveSettings(*settings))
+		// START pressed — all saves already handled inside the sub-editors.
+		log.Printf("ui: artwork options done: prio=%v regionPrio=%v", settings.ArtworkPrio, settings.RegionPrio)
 		return
 	}
 }
@@ -495,6 +508,56 @@ func editArtworkPriority(settings *AppSettings) {
 
 	settings.ArtworkPrio = newPrio
 	log.Printf("ui: artwork priority updated: %v", newPrio)
+	logError("saving settings", saveSettings(*settings))
+}
+
+// editRegionPriority shows a reorderable list of all regions.
+// The order determines fallback priority when resolving media and game names.
+// "cus" is excluded from the list (it is always appended automatically by RegionTypes).
+func editRegionPriority(settings *AppSettings) {
+	// Build the list: all user-selectable regions in current priority order.
+	var menuItems []gaba.MenuItem
+	for _, v := range settings.RegionTypes() {
+		if v == "cus" {
+			continue // automatic catch-all, not user-orderable
+		}
+		menuItems = append(menuItems, gaba.MenuItem{
+			Text:     RegionDisplay(v),
+			Metadata: v,
+		})
+	}
+
+	opts := gaba.DefaultListOptions("Region Priority", menuItems)
+	opts.ReorderButton = constants.VirtualButtonX
+	opts.ActionButton = constants.VirtualButtonStart
+	opts.FooterHelpItems = []gaba.FooterHelpItem{
+		{ButtonName: "B", HelpText: "Cancel"},
+		{ButtonName: "X", HelpText: "Reorder"},
+		{ButtonName: "START", HelpText: "Save"},
+	}
+
+	result, err := gaba.List(opts)
+	if isErrCancelled(err) {
+		return
+	}
+	if err != nil {
+		logError("region priority", err)
+		return
+	}
+	if result == nil || (result.Action != gaba.ListActionTriggered && result.Action != gaba.ListActionConfirmed) {
+		return // user cancelled
+	}
+
+	// Collect items in their new order.
+	var newPrio []string
+	for _, item := range result.Items {
+		if v, ok := item.Metadata.(string); ok {
+			newPrio = append(newPrio, v)
+		}
+	}
+
+	settings.RegionPrio = newPrio
+	log.Printf("ui: region priority updated: %v", newPrio)
 	logError("saving settings", saveSettings(*settings))
 }
 

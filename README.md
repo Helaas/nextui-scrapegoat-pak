@@ -1,0 +1,302 @@
+# ScrapeGoat
+
+Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your ROM library on tg5040/tg5050 devices.
+
+## Supported Platforms
+
+| Platform | Device | Screen | Build |
+|----------|--------|--------|-------|
+| `tg5040` (TG5040) | TrimUI Smart Pro | 1280×720 | Docker (ARM64) |
+| `tg5040` (TG3040) | TrimUI Brick | 1024×768 | Docker (ARM64) |
+| `tg5050` | TrimUI Smart Pro S | 1280×720 | Docker (ARM64) |
+
+> The Brick and Smart Pro share the same `tg5040` filesystem layout (tools, roms, settings paths are identical). The pak auto-detects the Brick via the `DEVICE` environment variable (`"brick"` vs `"smartpro"`), which NextUI's `launch.sh` exports at startup.
+
+## What It Does
+
+- Scrapes cover art and media from ScreenScraper.fr for all your ROMs
+- Automatically detects your ROM library by console and game count
+- Choose to scrape **missing only** (skip games with existing artwork) or **all ROMs** (overwrite existing)
+- Downloads `.cht` cheat files from the Libretro cheat database for supported systems
+- Live progress tracking with thread count, ETA, and API quota display
+- Configurable artwork priority (20 media types available including covers, wheels, fan art, and more)
+- Configurable region priority (USA, Europe, Japan, France, Germany, Spain, Italy, Portugal, World, and more)
+- Supports 32 classic gaming consoles via ScreenScraper
+- Supports 23 systems for cheat downloading via Libretro
+- Shows detailed scraping summary (Total / Found / Not Found / Errors)
+- Fully supports multi-disc games, CUE/BIN disc images, and zip-archived ROMs
+- Handles MD5 hashing with automatic fallback to filename-only matching
+- Interrupt at any time with a button press and install progress immediately
+
+## Usage
+
+1. Launch **ScrapeGoat** from the NextUI Tools menu
+2. Pick one of:
+   - **Scrape Artwork** — Download cover art and media for your ROM library
+   - **Download Cheats** — Get `.cht` cheat files for your games
+   - **Settings** — Configure credentials, artwork priority, and region priority
+3. Follow the on-screen prompts
+
+## Menu Options
+
+### Scrape Artwork
+
+1. **Verify ScreenScraper credentials** — Username and password must be set in Settings first (see [Credentials](#credentials) below)
+2. **Pick a console** — Choose which system to scrape (only systems with ScreenScraper support are shown)
+3. **Choose scrape mode:**
+   - **Scrape missing only** — Skip games that already have artwork, faster for reruns
+   - **Scrape all** — Overwrite existing artwork, useful for switching to a different art style
+4. **Watch the live scrape** — Real-time progress shows:
+   - **ROMs left** — Remaining games in the current batch
+   - **Threads** — How many parallel requests the API allows for your account
+   - **ETA** — Estimated time to completion (exponential moving average)
+   - **Quota** — Your daily API request usage (e.g. `90/20000`)
+5. **Stop or wait** — Press **Y** to stop early and install what's scraped so far, or wait for completion
+6. **Review summary** — See Total / Found / Not Found / Errors
+
+Supported systems for artwork (32 total):
+- **Nintendo:** Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance (and mGBA), SNES/SFC, Virtual Boy, Famicom Disk System
+- **Sega:** Master System, Genesis/MD, Game Gear, Mega-CD, 32X
+- **Sony:** PlayStation
+- **Atari:** 2600, 5200, 7800, Lynx
+- **Other:** PC Engine/TurboGrafx, Neo Geo Pocket, Neo Geo Pocket Color, Commodore 64, Commodore 128, Amstrad CPC, MSX, Amiga, ColecoVision, SG-1000, Arcade (FBNeo), Pokémon Mini, VIC-20
+
+### Download Cheats
+
+1. **Pick a console** — Choose which system to download cheats for (only systems with Libretro cheat support are shown)
+2. **Watch the download progress** — Shows current ROM being matched
+3. **Review summary** — See Total / Downloaded / Not Found / Errors
+
+The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name (strips region tags like `(USA)`, punctuation, and whitespace).
+
+Supported systems for cheats (23 total):
+Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, SNES/SFC, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600/5200/7800, Lynx, ColecoVision, MSX, SG-1000
+
+### Settings
+
+Configure your ScreenScraper credentials, customize artwork and region priority, and control visibility of hidden/disabled ROMs.
+
+#### ScreenScraper Credentials
+
+**Username** — Your ScreenScraper.fr login (optional, but recommended for higher rate limits)
+- Used to authenticate API requests
+- Gives you a higher daily quota and more concurrent threads
+- Saved locally in `~/.userdata/shared/ScrapeGoat/settings.json` (never committed to git)
+
+**Password** — Your ScreenScraper.fr password (optional, but recommended)
+- Must be set together with username for any effect
+- Saved locally, not shared
+
+If neither username nor password is set, you're limited to ~1 API request per minute.
+
+#### Artwork Priority
+
+Reorderable list of media types. The order determines which artwork is downloaded when multiple options are available:
+
+| Type | Description |
+|------|-------------|
+| Box art (2D) | Traditional 2D game cover (most common) |
+| Box art (3D) | 3D rendered box art |
+| Mix Recalbox V1 | Custom composite artwork (Recalbox style v1) |
+| Mix Recalbox V2 | Custom composite artwork (Recalbox style v2) |
+| Screenshot (title) | Title screen or fade-in |
+| Screenshot (in-game) | Gameplay screenshot |
+| Fan art | Community-created artwork |
+| Wheel | Wheel logo / game title graphic |
+| Wheel (carbon) | Wheel logo with carbon fiber effect |
+| Wheel (steel) | Wheel logo with steel effect |
+
+Default order: Box art 2D → Box art 3D → Mix Recalbox V1 → Screenshots
+
+Use **X** to reorder, **START** to save.
+
+#### Region Priority
+
+Reorderable list of regions for matching the best artwork:
+
+| Region | Code |
+|--------|------|
+| USA | us |
+| Europe | eu |
+| Japan | jp |
+| World | wor |
+| France | fr |
+| Germany | de |
+| Spain | es |
+| Italy | it |
+| Portugal | pt |
+| ScreenScraper | ss |
+
+Default order: USA → Europe → Japan → World  
+By default, **Custom/Homebrew** (`cus`) is always appended as a last resort if no regional match is found.
+
+Use **X** to reorder, **START** to save.
+
+#### Show hidden/disabled ROMs
+
+When **Off** (default), the ROM and console pickers hide:
+- Folders and files that start with `.` (dot-prefixed)
+- Folders and files that end in `.disabled`
+
+Turn this **On** to include those entries in your scrape. Useful if you want to include your `.disabled` consoles or hidden games in the scrape run.
+
+| Option | Default |
+|--------|---------|
+| Show hidden/disabled | **Off** |
+
+## Artwork Storage
+
+Scraped artwork is saved as PNG files in your ROM directories:
+
+```
+/mnt/SDCARD/Roms/Game Boy Advance (GBA)/
+  .media/
+    Pokemon Emerald.png
+    Pokemon FireRed.png
+    ...
+```
+
+The pak stores one `.png` per game in a `.media/` subfolder. Your ROM files are untouched.
+
+## Cheat Storage
+
+Downloaded cheats are organized by system:
+
+```
+/mnt/SDCARD/Cheats/
+  GBA/
+    Pokemon Emerald.cht
+    Pokemon FireRed.cht
+    ...
+  GBC/
+    ...
+```
+
+Cheat files are matched to your ROMs by normalized game name. If a cheat file already exists on your device, it is skipped (not re-downloaded).
+
+## Credentials
+
+**User credentials (optional):**
+- Separate from developer credentials
+- Configured via the **Settings** screen in ScrapeGoat
+- Stored locally on your device only
+- Enables higher rate limits and more concurrent threads
+
+> User credentials are stored on your device in `~/.userdata/shared/ScrapeGoat/settings.json`.
+
+## Logging
+
+Logs are written to:
+
+```
+/mnt/SDCARD/.userdata/<platform>/logs/scrapegoat.log
+```
+
+The platform is read from the `PLATFORM` environment variable. If not set, it defaults to `tg5040`. Logs include:
+- API requests and responses
+- Artwork/cheat downloads (success and errors)
+- Settings load/save operations
+- Error details and stack traces
+
+## Building
+
+### Prerequisites
+
+**macOS (development):**
+```bash
+brew install go sdl2 sdl2_ttf sdl2_image sdl2_gfx
+```
+
+**Embedded (tg5040/tg5050):**
+- Docker with ARM64 support
+- GNU Make
+
+### First-Time Setup
+
+Create `.env.local` with your ScreenScraper.fr developer credentials (see [Credentials](#credentials)):
+
+```bash
+cp .env.example .env.local
+```
+
+Then edit `.env.local` and add:
+```bash
+SCREENSCRAPER_DEV_ID=your_dev_id
+SCREENSCRAPER_DEV_PASSWORD=your_dev_password
+```
+
+These are embedded in the binary at build time. The `.env.local` file is in `.gitignore` and will never be committed.
+
+To download and vendor dependencies:
+```bash
+make deps
+```
+
+This vendors Go modules and applies necessary patches to Gabagool for TG5050 support.
+
+### Build Commands
+
+```bash
+# Auto-detect platform and build
+make
+
+# Build for specific platform
+make mac
+make tg5040
+make tg5050
+
+# Build for all embedded platforms
+make embedded
+
+# Package as .pak bundles for NextUI
+make package
+
+# Export TrimUI .pakz (Tools/tg5040 + Tools/tg5050 layout)
+make export-trimui
+
+# Update dependencies and re-apply patches
+make deps
+
+# See all targets
+make help
+```
+
+### Output
+
+| Target | Output |
+|--------|--------|
+| mac | `build/scrapegoat` |
+| tg5040 | `build/release/tg5040/ScrapeGoat.pak.zip` |
+| tg5050 | `build/release/tg5050/ScrapeGoat.pak.zip` |
+| export-trimui | `build/release/trimui/ScrapeGoat.pakz` |
+
+The `.pak.zip` includes:
+- Binary (`scrapegoat`)
+- Launch script (`launch.sh`)
+- Pak metadata (`pak.json`)
+- License file (`LICENSE`)
+- Bundled static git binary (with HTTPS support via embedded CA certs)
+
+## Installing on a Handheld
+
+1. **Build and package:** `make package` or `make export-trimui`
+
+2. **If using `make package`:**
+   - Extract `ScrapeGoat.pak.zip` to your SD card as `Tools/<platform>/ScrapeGoat.pak/`
+   - Replace `<platform>` with `tg5040` or `tg5050`
+
+3. **If using `make export-trimui`:**
+   - Place `ScrapeGoat.pakz` at the root of your SD card
+   - NextUI will auto-install it upon (re)boot, creating both `Tools/tg5040/ScrapeGoat.pak/` and `Tools/tg5050/ScrapeGoat.pak/`
+
+4. **Launch** from the NextUI Tools menu
+
+## Acknowledgements
+
+Built with [Gabagool](https://github.com/BrandonKowalski/gabagool) by [@BrandonKowalski](https://github.com/BrandonKowalski).
+
+Uses the [Libretro cheat database](https://github.com/libretro/libretro-database) and [ScreenScraper.fr](https://www.screenscraper.fr/) API.
+
+## License
+
+MIT

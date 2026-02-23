@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -17,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	uatomic "go.uber.org/atomic"
 )
 
 // screenscraper.go — ScreenScraper.fr API client (JSON mode).
@@ -134,7 +138,7 @@ type ssMedia struct {
 // SearchROM looks up a ROM on ScreenScraper.fr.
 // First attempts MD5 hash matching; falls back to filename-only if hash lookup returns no results.
 // artworkTypes is a priority-ordered list of media types to try.
-func (c *SSClient) SearchROM(rom ROMFile, systemID int, artworkTypes []string, region string) (*SSResult, error) {
+func (c *SSClient) SearchROM(ctx context.Context, rom ROMFile, systemID int, artworkTypes []string, regionPrio []string) (*SSResult, error) {
 	md5Hash, fileSize, err := computeMD5(rom)
 	if err != nil {
 		log.Printf("SearchROM: md5 failed for %s: %v — falling back to filename", rom.Name, err)
@@ -142,7 +146,7 @@ func (c *SSClient) SearchROM(rom ROMFile, systemID int, artworkTypes []string, r
 		fileSize = 0
 	}
 
-	result, err := c.searchROMRequest(rom.Name, md5Hash, fileSize, systemID, artworkTypes, region)
+	result, err := c.searchROMRequest(ctx, rom.Name, md5Hash, fileSize, systemID, artworkTypes, regionPrio)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +157,7 @@ func (c *SSClient) SearchROM(rom ROMFile, systemID int, artworkTypes []string, r
 	// Hash lookup returned no results — retry without hash.
 	if md5Hash != "" {
 		log.Printf("SearchROM: hash lookup returned no results for %s — retrying with filename only", rom.Name)
-		result, err = c.searchROMRequest(rom.Name, "", 0, systemID, artworkTypes, region)
+		result, err = c.searchROMRequest(ctx, rom.Name, "", 0, systemID, artworkTypes, regionPrio)
 		if err != nil {
 			return nil, err
 		}
@@ -161,7 +165,7 @@ func (c *SSClient) SearchROM(rom ROMFile, systemID int, artworkTypes []string, r
 	return result, nil
 }
 
-func (c *SSClient) searchROMRequest(romName, md5Hash string, fileSize int64, systemID int, artworkTypes []string, region string) (*SSResult, error) {
+func (c *SSClient) searchROMRequest(ctx context.Context, romName, md5Hash string, fileSize int64, systemID int, artworkTypes []string, regionPrio []string) (*SSResult, error) {
 	params := url.Values{}
 	params.Set("devid", ssDevID)
 	params.Set("devpassword", ssDevPwd)
@@ -193,7 +197,7 @@ func (c *SSClient) searchROMRequest(romName, md5Hash string, fileSize int64, sys
 	reqURL := ssAPIBase + "/jeuInfos.php?" + params.Encode()
 	log.Printf("searchROMRequest: GET %s", sanitizeLogURL(reqURL))
 
-	req, err := http.NewRequest("GET", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -241,7 +245,7 @@ func (c *SSClient) searchROMRequest(romName, md5Hash string, fileSize int64, sys
 		return nil, nil // not found
 	}
 
-	mediaURL, mediaFormat := resolveMedia(game.Medias, artworkTypes, region)
+	mediaURL, mediaFormat := resolveMedia(game.Medias, artworkTypes, regionPrio)
 	if mediaURL == "" {
 		return nil, nil // found game but no matching media
 	}
@@ -251,7 +255,7 @@ func (c *SSClient) searchROMRequest(romName, md5Hash string, fileSize int64, sys
 	maxThreads, _ := strconv.Atoi(data.Response.SSUser.MaxThreads)
 
 	return &SSResult{
-		GameName:      resolveGameName(game.Names, region),
+		GameName:      resolveGameName(game.Names, regionPrio),
 		MediaURL:      strings.TrimSpace(mediaURL),
 		MediaFormat:   mediaFormat,
 		RequestsToday: requestsToday,
@@ -288,18 +292,10 @@ func checkHTTPStatus(status int) error {
 // ── Media / name resolution ──────────────────────────────────
 
 // resolveMedia finds the best media URL by trying each type in priority order.
-// For each type, it tries the preferred region first, then falls back through
-// standard regions. Returns the first match found across the type priority list.
-func resolveMedia(medias []ssMedia, mediaTypes []string, preferredRegion string) (string, string) {
-	regionFallback := []string{preferredRegion, "wor", "us", "eu", "jp", "cus"}
-	seen := map[string]bool{}
-	var regions []string
-	for _, r := range regionFallback {
-		if !seen[r] {
-			seen[r] = true
-			regions = append(regions, r)
-		}
-	}
+// For each type, it tries regions in the order given by regionPrio.
+// Returns the first match found across the type priority list.
+func resolveMedia(medias []ssMedia, mediaTypes []string, regionPrio []string) (string, string) {
+	regions := regionPrio
 
 	// Try each media type in priority order.
 	for _, mediaType := range mediaTypes {
@@ -332,9 +328,9 @@ func resolveMedia(medias []ssMedia, mediaTypes []string, preferredRegion string)
 	return "", ""
 }
 
-// resolveGameName picks the best game name for the given region.
-func resolveGameName(names []ssName, region string) string {
-	for _, r := range []string{region, "wor", "us", "eu", "jp"} {
+// resolveGameName picks the best game name using the region priority list.
+func resolveGameName(names []ssName, regionPrio []string) string {
+	for _, r := range regionPrio {
 		for _, n := range names {
 			if n.Region == r {
 				return strings.TrimSpace(n.Text)
@@ -351,8 +347,8 @@ func resolveGameName(names []ssName, region string) string {
 
 // DownloadMedia downloads a media URL and saves it as a PNG file at destPath.
 // If the source is a JPEG it is decoded and re-encoded as PNG.
-func (c *SSClient) DownloadMedia(mediaURL, destPath string) error {
-	req, err := http.NewRequest("GET", mediaURL, nil)
+func (c *SSClient) DownloadMedia(ctx context.Context, mediaURL, destPath string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", mediaURL, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
@@ -436,13 +432,38 @@ func truncateStr(s string, n int) string {
 
 // ── Console scraping (multithreaded) ──────────────────────────
 
+// formatETA formats a duration into a short human-readable string for the scrape HUD.
+func formatETA(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	d = d.Round(time.Second)
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh%02dm%02ds", h, m, s)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm%02ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
+}
+
 // scrapeConsole scrapes all ROMs in a console directory.
 // Uses concurrent workers sized by the API's maxthreads response.
-func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, setProgress func(float64), setMessage func(string)) (ScrapeSummary, error) {
-	roms, err := scanROMs(console.Path)
+//
+// interruptSignal, when non-nil, is polled before each new ROM is dispatched.
+// Storing 1 into it causes scraping to stop after in-flight workers finish,
+// returning whatever has been scraped so far.
+func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, interruptSignal *uatomic.Int32, setProgress func(float64), setMessage func(string)) (ScrapeSummary, error) {
+	roms, err := scanROMs(console.Path, settings.ShowHidden)
 	if err != nil {
 		return ScrapeSummary{}, fmt.Errorf("scan roms: %w", err)
 	}
+
+	// Strip .disabled suffix so artwork is always saved under the non-disabled path.
+	consoleBaseName := strings.TrimSuffix(console.Name, ".disabled")
 
 	systemID, ok := SSPlatformIDs[console.Tag]
 	if !ok {
@@ -453,7 +474,7 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, s
 	var toScrape []ROMFile
 	var preExisting int
 	for _, rom := range roms {
-		if missingOnly && artworkExists(console.Name, rom.Display) {
+		if missingOnly && artworkExists(consoleBaseName, rom.Display) {
 			log.Printf("scrapeConsole: skip %s (artwork exists)", rom.Display)
 			preExisting++
 			continue
@@ -463,6 +484,7 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, s
 
 	client := newSSClient(settings.SSUsername, settings.SSPassword)
 	total := len(roms)
+	scrapeTotal := len(toScrape)
 	var summary ScrapeSummary
 	summary.Total = total
 	summary.Found = preExisting // pre-existing artwork counts as found
@@ -472,16 +494,103 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, s
 		return summary, nil
 	}
 
+	// Live stats — written under mu or atomically, read by the HUD goroutine.
+	var statsThreads, statsReqToday, statsMaxReq int64
+	// ETA state: EMA of nanoseconds-per-ROM + timestamp of last completion.
+	// Using EMA means each new completion smoothly adjusts the estimate rather
+	// than recomputing a global average that causes ETA to climb during long API calls.
+	var statsAvgROMNs int64 // exponential moving average of ns per ROM
+	var statsLastNs int64   // Unix nanoseconds when the most recent ROM finished
+
+	// Context for cancelling all in-flight HTTP requests immediately on interrupt.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Interrupt watcher: polls interruptSignal every 16ms and cancels the context
+	// the moment the user presses the stop button, aborting all in-flight requests.
+	go func() {
+		ticker := time.NewTicker(16 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if interruptSignal != nil && interruptSignal.Load() != 0 {
+					cancel()
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Start the clock before phase 1 so that ROM's duration seeds the EMA.
+	startTime := time.Now()
+
 	// Phase 1: Scrape first ROM sequentially to learn maxthreads.
 	maxThreads := 1
-	firstResult := scrapeOneROM(client, toScrape[0], console, systemID, settings, &summary)
-	if firstResult != nil && firstResult.MaxThreads > 1 {
-		maxThreads = firstResult.MaxThreads
+	firstResult := scrapeOneROM(ctx, client, toScrape[0], console, systemID, settings, &summary)
+	if firstResult != nil {
+		if firstResult.MaxThreads > 1 {
+			maxThreads = firstResult.MaxThreads
+		}
+		atomic.StoreInt64(&statsThreads, int64(maxThreads))
+		atomic.StoreInt64(&statsReqToday, int64(firstResult.RequestsToday))
+		atomic.StoreInt64(&statsMaxReq, int64(firstResult.MaxRequests))
 	}
 	log.Printf("scrapeConsole: maxthreads=%d (from API)", maxThreads)
 
+	// Seed the EMA with the phase-1 ROM's actual duration.
+	atomic.StoreInt64(&statsAvgROMNs, time.Since(startTime).Nanoseconds())
+	atomic.StoreInt64(&statsLastNs, time.Now().UnixNano())
+
 	var completed int64 = 1 // first ROM already done
 	setProgress(float64(completed) / float64(total))
+
+	// HUD goroutine: pushes a formatted stats line to setMessage every ~333ms.
+	// ETA = remaining * avgPerROM − timeSinceLastCompletion, which counts down
+	// smoothly between ROM finishes and jumps correctly when one completes.
+	stopHUD := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(333 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				done := atomic.LoadInt64(&completed)
+				remaining := int64(scrapeTotal) - done
+				threads := atomic.LoadInt64(&statsThreads)
+				reqToday := atomic.LoadInt64(&statsReqToday)
+				maxReq := atomic.LoadInt64(&statsMaxReq)
+
+				var etaStr string
+				avgNs := atomic.LoadInt64(&statsAvgROMNs)
+				if remaining <= 0 {
+					etaStr = "finishing..."
+				} else if avgNs > 0 {
+					timeSinceLast := time.Now().UnixNano() - atomic.LoadInt64(&statsLastNs)
+					etaNs := remaining*avgNs - timeSinceLast
+					if etaNs < int64(time.Second) {
+						etaStr = "finishing..."
+					} else {
+						etaStr = formatETA(time.Duration(etaNs))
+					}
+				} else {
+					etaStr = "calculating..."
+				}
+
+				line1 := fmt.Sprintf("ROMs left: %d / %d", remaining, scrapeTotal)
+				line2 := fmt.Sprintf("Threads: %d  •  ETA: %s", threads, etaStr)
+				if maxReq > 0 {
+					line2 += fmt.Sprintf("  •  Quota: %d/%d", reqToday, maxReq)
+				}
+				setMessage(line1 + "\n" + line2)
+			case <-stopHUD:
+				return
+			}
+		}
+	}()
+	defer close(stopHUD)
 
 	if len(toScrape) == 1 {
 		setProgress(1.0)
@@ -493,11 +602,15 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, s
 	// Phase 2: Scrape remaining ROMs with worker pool.
 	sem := make(chan struct{}, maxThreads)
 	var mu sync.Mutex
-	var aborted int32 // atomic flag for early abort
+	var aborted int32 // atomic flag for early abort (quota exceeded)
 
 	var wg sync.WaitGroup
 	for _, rom := range toScrape[1:] {
 		if atomic.LoadInt32(&aborted) != 0 {
+			break
+		}
+		if interruptSignal != nil && interruptSignal.Load() != 0 {
+			log.Printf("scrapeConsole: interrupted by user after %d ROMs", atomic.LoadInt64(&completed))
 			break
 		}
 
@@ -513,16 +626,28 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, s
 			}
 
 			var localSummary ScrapeSummary
-			result := scrapeOneROM(client, rom, console, systemID, settings, &localSummary)
+			result := scrapeOneROM(ctx, client, rom, console, systemID, settings, &localSummary)
 
 			mu.Lock()
 			summary.Found += localSummary.Found
 			summary.NotFound += localSummary.NotFound
 			summary.Errors += localSummary.Errors
-			if result != nil && result.MaxRequests > 0 && result.RequestsToday >= result.MaxRequests {
-				atomic.StoreInt32(&aborted, 1)
-				log.Printf("scrapeConsole: quota exceeded (%d/%d)", result.RequestsToday, result.MaxRequests)
+			if result != nil {
+				atomic.StoreInt64(&statsReqToday, int64(result.RequestsToday))
+				atomic.StoreInt64(&statsMaxReq, int64(result.MaxRequests))
+				if result.MaxRequests > 0 && result.RequestsToday >= result.MaxRequests {
+					atomic.StoreInt32(&aborted, 1)
+					log.Printf("scrapeConsole: quota exceeded (%d/%d)", result.RequestsToday, result.MaxRequests)
+				}
 			}
+			// Update EMA of time-per-ROM (serialised under mu so updates never race).
+			nowNs := time.Now().UnixNano()
+			elapsed := nowNs - atomic.LoadInt64(&statsLastNs)
+			prev := atomic.LoadInt64(&statsAvgROMNs)
+			if newAvg := int64(0.3*float64(elapsed) + 0.7*float64(prev)); newAvg > 0 {
+				atomic.StoreInt64(&statsAvgROMNs, newAvg)
+			}
+			atomic.StoreInt64(&statsLastNs, nowNs)
 			mu.Unlock()
 
 			n := atomic.AddInt64(&completed, 1)
@@ -540,9 +665,12 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, s
 // scrapeOneROM searches for a single ROM and downloads its artwork.
 // If summary is non-nil, updates counts under no lock (caller's responsibility).
 // Returns the SSResult on success, nil on failure/not-found.
-func scrapeOneROM(client *SSClient, rom ROMFile, console ConsoleDir, systemID int, settings AppSettings, summary *ScrapeSummary) *SSResult {
-	result, err := client.SearchROM(rom, systemID, settings.ArtworkTypes(), settings.Region)
+func scrapeOneROM(ctx context.Context, client *SSClient, rom ROMFile, console ConsoleDir, systemID int, settings AppSettings, summary *ScrapeSummary) *SSResult {
+	result, err := client.SearchROM(ctx, rom, systemID, settings.ArtworkTypes(), settings.RegionTypes())
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil // intentional stop — don't count as an error
+		}
 		if strings.Contains(err.Error(), "daily quota") || strings.Contains(err.Error(), "thread limit") {
 			log.Printf("scrapeConsole: %v", err)
 		} else {
@@ -561,8 +689,11 @@ func scrapeOneROM(client *SSClient, rom ROMFile, console ConsoleDir, systemID in
 		return nil
 	}
 
-	destPath := artworkSrcPath(console.Name, rom.Display)
-	if err := client.DownloadMedia(result.MediaURL, destPath); err != nil {
+	destPath := artworkSrcPath(strings.TrimSuffix(console.Name, ".disabled"), rom.Display)
+	if err := client.DownloadMedia(ctx, result.MediaURL, destPath); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil // intentional stop
+		}
 		log.Printf("scrapeConsole: download error for %s: %v", rom.Name, err)
 		if summary != nil {
 			summary.Errors++
@@ -574,16 +705,6 @@ func scrapeOneROM(client *SSClient, rom ROMFile, console ConsoleDir, systemID in
 		summary.Found++
 	}
 	log.Printf("scrapeConsole: saved artwork for %s → %s", rom.Display, destPath)
-
-	// Regenerate bg.png for any matching shortcuts.
-	shortcuts, err := findShortcutsForROM(console.Name, rom.Display)
-	if err != nil {
-		log.Printf("scrapeConsole: findShortcuts error: %v", err)
-	}
-	for _, scPath := range shortcuts {
-		updateShortcutBg(scPath, destPath, settings)
-	}
-
 	return result
 }
 

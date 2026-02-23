@@ -6,8 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/png"
 	"io"
 	"log"
 	"os"
@@ -15,7 +13,6 @@ import (
 	"sort"
 	"strings"
 
-	xdraw "golang.org/x/image/draw"
 )
 
 // ── Device paths ─────────────────────────────────────────────
@@ -34,19 +31,21 @@ const shortcutMarkerFile = ".shortcut"
 
 // ConsoleDir represents a ROM console directory.
 type ConsoleDir struct {
-	Name    string // e.g. "Game Boy Advance (GBA)"
-	Tag     string // e.g. "GBA"
-	Path    string // full path to the directory
-	Display string // display name without tag suffix
+	Name       string // e.g. "Game Boy Advance (GBA)" or "Game Boy Advance (GBA).disabled"
+	Tag        string // e.g. "GBA"
+	Path       string // full path to the directory
+	Display    string // display name without tag suffix
+	IsDisabled bool   // true when the folder ends with ".disabled"
 }
 
 // ROMFile represents a ROM file or game folder within a console directory.
 type ROMFile struct {
-	Name        string // filename or folder name
+	Name        string // filename or folder name (may include ".disabled" suffix)
 	Path        string // full path
-	Display     string // display name (no extension for files; folder name for multi-disc/cue)
+	Display     string // display name (no extension, no ".disabled" suffix)
 	IsMultiDisc bool   // subdirectory containing {name}.m3u
 	IsCueFolder bool   // subdirectory containing {name}.cue
+	IsDisabled  bool   // true when the file/folder name ends with ".disabled"
 }
 
 // ScrapeSummary holds the results of a scrape or cheat download run.
@@ -87,7 +86,10 @@ func getCheatRepoPath() string {
 }
 
 // scanConsoleDirs returns all ROM console directories, excluding shortcut folders.
-func scanConsoleDirs() ([]ConsoleDir, error) {
+// When showHidden is false (default), directories starting with "." or ending with
+// ".disabled" are skipped. When true, they are included (Mac system dotfiles without
+// a tag are still excluded).
+func scanConsoleDirs(showHidden bool) ([]ConsoleDir, error) {
 	romsDir := getROMsPath()
 	entries, err := os.ReadDir(romsDir)
 	if err != nil {
@@ -102,40 +104,54 @@ func scanConsoleDirs() ([]ConsoleDir, error) {
 		name := e.Name()
 		fullPath := filepath.Join(romsDir, name)
 
-		// Skip shortcut folders (have a .shortcut marker or invisible prefix)
+		// Always skip shortcut folders.
 		if isShortcutFolder(fullPath) {
 			continue
 		}
-		// Skip hidden/system files
-		if strings.HasPrefix(name, ".") || name == "map.txt" {
-			continue
-		}
-		// Skip .disabled suffix folders (console dirs themselves, not ROMs)
-		if strings.HasSuffix(name, ".disabled") {
-			continue
+
+		if !showHidden {
+			if isHidden(name) {
+				continue
+			}
+		} else {
+			// With showHidden: still exclude Mac dotfiles (dot-dirs without a TAG).
+			if isMacDotfile(name) || name == "map.txt" {
+				continue
+			}
 		}
 
-		tag := extractTag(name)
+		// For .disabled folders, strip the suffix before extracting tag/display.
+		isDisabled := strings.HasSuffix(name, ".disabled")
+		baseName := name
+		if isDisabled {
+			baseName = strings.TrimSuffix(name, ".disabled")
+		}
+
+		tag := extractTag(baseName)
 		if tag == "" {
 			continue
 		}
 		consoles = append(consoles, ConsoleDir{
-			Name:    name,
-			Tag:     tag,
-			Path:    fullPath,
-			Display: extractDisplayName(name),
+			Name:       name,
+			Tag:        tag,
+			Path:       fullPath,
+			Display:    extractDisplayName(baseName),
+			IsDisabled: isDisabled,
 		})
 	}
 
 	sort.Slice(consoles, func(i, j int) bool {
 		return strings.ToLower(consoles[i].Display) < strings.ToLower(consoles[j].Display)
 	})
-	log.Printf("scanConsoleDirs: found %d console folders", len(consoles))
+	log.Printf("scanConsoleDirs: showHidden=%v found %d console folders", showHidden, len(consoles))
 	return consoles, nil
 }
 
 // scanROMs returns all ROM files in a console directory.
-func scanROMs(consoleDir string) ([]ROMFile, error) {
+// When showHidden is false (default), files/folders starting with "." or ending
+// with ".disabled" are skipped. When true, they are included; ".disabled" is
+// stripped from the display name and the ROM is marked IsDisabled.
+func scanROMs(consoleDir string, showHidden bool) ([]ROMFile, error) {
 	entries, err := os.ReadDir(consoleDir)
 	if err != nil {
 		return nil, fmt.Errorf("reading rom dir: %w", err)
@@ -144,41 +160,58 @@ func scanROMs(consoleDir string) ([]ROMFile, error) {
 	var roms []ROMFile
 	for _, e := range entries {
 		name := e.Name()
-		// Skip hidden/system files
-		if strings.HasPrefix(name, ".") || name == "map.txt" {
-			continue
+
+		if !showHidden {
+			if isHidden(name) {
+				continue
+			}
+		} else {
+			// Always skip Mac/system artifacts and map.txt regardless of showHidden.
+			if strings.HasPrefix(name, ".") || name == "map.txt" {
+				continue
+			}
+		}
+
+		// Strip .disabled suffix for display and m3u/cue detection; mark as disabled.
+		isDisabled := strings.HasSuffix(name, ".disabled")
+		baseName := name
+		if isDisabled {
+			baseName = strings.TrimSuffix(name, ".disabled")
 		}
 
 		if e.IsDir() {
 			dirPath := filepath.Join(consoleDir, name)
-			if _, err := os.Stat(filepath.Join(dirPath, name+".m3u")); err == nil {
+			if _, err := os.Stat(filepath.Join(dirPath, baseName+".m3u")); err == nil {
 				roms = append(roms, ROMFile{
 					Name:        name,
 					Path:        dirPath,
-					Display:     name,
+					Display:     baseName,
 					IsMultiDisc: true,
+					IsDisabled:  isDisabled,
 				})
-			} else if _, err := os.Stat(filepath.Join(dirPath, name+".cue")); err == nil {
+			} else if _, err := os.Stat(filepath.Join(dirPath, baseName+".cue")); err == nil {
 				roms = append(roms, ROMFile{
 					Name:        name,
 					Path:        dirPath,
-					Display:     name,
+					Display:     baseName,
 					IsCueFolder: true,
+					IsDisabled:  isDisabled,
 				})
 			}
 			continue
 		}
 		roms = append(roms, ROMFile{
-			Name:    name,
-			Path:    filepath.Join(consoleDir, name),
-			Display: stripExtension(name),
+			Name:       name,
+			Path:       filepath.Join(consoleDir, name),
+			Display:    stripExtension(baseName),
+			IsDisabled: isDisabled,
 		})
 	}
 
 	sort.Slice(roms, func(i, j int) bool {
 		return strings.ToLower(roms[i].Display) < strings.ToLower(roms[j].Display)
 	})
-	log.Printf("scanROMs: dir=%s roms=%d", consoleDir, len(roms))
+	log.Printf("scanROMs: dir=%s showHidden=%v roms=%d", consoleDir, showHidden, len(roms))
 	return roms, nil
 }
 
@@ -252,12 +285,6 @@ func findShortcutsForROM(consoleDirName, romDisplayName string) ([]string, error
 	}
 	log.Printf("findShortcutsForROM: console=%s rom=%s matches=%d", consoleDirName, romDisplayName, len(matches))
 	return matches, nil
-}
-
-// updateShortcutBg regenerates the bg.png for a shortcut folder using the provided source art.
-func updateShortcutBg(shortcutPath, artSrcPath string, settings AppSettings) {
-	useGlobalBg, forceBlack := settings.artworkBgParams()
-	generateArtworkBg(artSrcPath, shortcutPath, useGlobalBg, forceBlack)
 }
 
 // ── MD5 hashing ──────────────────────────────────────────────
@@ -384,141 +411,23 @@ func findPrimaryROMFile(folderPath string, isCue bool) (string, error) {
 	return "", nil
 }
 
-// ── Image compositing ────────────────────────────────────────
-// Ported verbatim from nextui-shortcuts-pak/device.go
+// ── Visibility helpers ───────────────────────────────────────
 
-// generateArtworkBg composites a fullscreen bg.png for a shortcut's .media/ folder.
-func generateArtworkBg(artSrcPath, destFolder string, useGlobalBg, forceBlack bool) {
-	var artImg image.Image
-	if _, err := os.Stat(artSrcPath); err == nil {
-		img, err := loadPNGImage(artSrcPath)
-		if err != nil {
-			log.Printf("generateArtworkBg: load art: %v", err)
-			return
-		}
-		artImg = img
-	} else if !forceBlack {
-		return
-	}
-
-	screenW, screenH := screenDimensions()
-	canvas := image.NewNRGBA(image.Rect(0, 0, screenW, screenH))
-
-	pix := canvas.Pix
-	for i := 0; i < len(pix); i += 4 {
-		pix[i], pix[i+1], pix[i+2], pix[i+3] = 0x00, 0x00, 0x00, 0xff
-	}
-
-	if useGlobalBg {
-		bgPath := globalBgPath()
-		if bgImg, err := loadPNGImage(bgPath); err == nil {
-			srcW, srcH := bgImg.Bounds().Dx(), bgImg.Bounds().Dy()
-			scaleX := float64(screenW) / float64(srcW)
-			scaleY := float64(screenH) / float64(srcH)
-			scale := scaleX
-			if scaleY > scaleX {
-				scale = scaleY
-			}
-			newW := int(float64(srcW) * scale)
-			newH := int(float64(srcH) * scale)
-			scaledBg := image.NewNRGBA(image.Rect(0, 0, newW, newH))
-			xdraw.BiLinear.Scale(scaledBg, scaledBg.Bounds(), bgImg, bgImg.Bounds(), xdraw.Src, nil)
-			offX := (newW - screenW) / 2
-			offY := (newH - screenH) / 2
-			xdraw.Draw(canvas, canvas.Bounds(), scaledBg, image.Point{offX, offY}, xdraw.Src)
-		}
-	}
-
-	if artImg != nil {
-		maxW := int(float64(screenW) * 0.45)
-		maxH := int(float64(screenH) * 0.60)
-		artW, artH := thumbnailFit(artImg.Bounds().Dx(), artImg.Bounds().Dy(), maxW, maxH)
-		scaledArt := image.NewNRGBA(image.Rect(0, 0, artW, artH))
-		xdraw.BiLinear.Scale(scaledArt, scaledArt.Bounds(), artImg, artImg.Bounds(), xdraw.Over, nil)
-		applyRoundedCorners(scaledArt, 40)
-
-		const rightMargin = 30
-		targetX := max(0, screenW-artW-rightMargin)
-		centerY := screenH/2 - artH/2
-		artDst := image.Rect(targetX, centerY, targetX+artW, centerY+artH)
-		xdraw.Draw(canvas, artDst, scaledArt, image.Point{}, xdraw.Over)
-	}
-
-	mediaDir := filepath.Join(destFolder, ".media")
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
-		log.Printf("generateArtworkBg: mkdir .media: %v", err)
-		return
-	}
-	f, err := os.Create(filepath.Join(mediaDir, "bg.png"))
-	if err != nil {
-		log.Printf("generateArtworkBg: create bg.png: %v", err)
-		return
-	}
-	defer f.Close()
-	if err := png.Encode(f, canvas); err != nil {
-		log.Printf("generateArtworkBg: encode: %v", err)
-	}
-	log.Printf("generateArtworkBg: wrote %s/.media/bg.png (%dx%d)", destFolder, screenW, screenH)
+// isHidden returns true for entries that NextUI hides by default:
+// dot-prefixed files/dirs, items ending with ".disabled", and map.txt.
+func isHidden(name string) bool {
+	return strings.HasPrefix(name, ".") ||
+		strings.HasSuffix(name, ".disabled") ||
+		name == "map.txt"
 }
 
-func screenDimensions() (int, int) {
-	if isBrick {
-		return 1024, 768
+// isMacDotfile returns true for dot-prefixed names that have no (TAG) suffix —
+// i.e. Mac/system artifacts rather than user-created hidden console dirs.
+func isMacDotfile(name string) bool {
+	if !strings.HasPrefix(name, ".") {
+		return false
 	}
-	return 1280, 720
-}
-
-func globalBgPath() string {
-	return filepath.Join(getSDCardPath(), "bg.png")
-}
-
-func loadPNGImage(path string) (image.Image, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return png.Decode(f)
-}
-
-func applyRoundedCorners(img *image.NRGBA, radius int) {
-	b := img.Bounds()
-	w, h := b.Dx(), b.Dy()
-	if radius <= 0 || w == 0 || h == 0 {
-		return
-	}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			dx := 0
-			if x < radius {
-				dx = radius - x
-			} else if x >= w-radius {
-				dx = x - (w - radius - 1)
-			}
-			dy := 0
-			if y < radius {
-				dy = radius - y
-			} else if y >= h-radius {
-				dy = y - (h - radius - 1)
-			}
-			if dx*dx+dy*dy > radius*radius {
-				off := img.PixOffset(x, y)
-				img.Pix[off], img.Pix[off+1], img.Pix[off+2], img.Pix[off+3] = 0, 0, 0, 0
-			}
-		}
-	}
-}
-
-func thumbnailFit(srcW, srcH, maxW, maxH int) (int, int) {
-	if srcW == 0 || srcH == 0 {
-		return maxW, maxH
-	}
-	newW, newH := maxW, srcH*maxW/srcW
-	if newH > maxH {
-		newH = maxH
-		newW = srcW * maxH / srcH
-	}
-	return newW, newH
+	return extractTag(name) == ""
 }
 
 // ── String utilities ─────────────────────────────────────────
@@ -570,12 +479,6 @@ func readShortcutMarker(folderPath string) string {
 
 // ── App settings ─────────────────────────────────────────────
 
-const (
-	ArtworkModeBlack     = 0
-	ArtworkModeWallpaper = 1
-	ArtworkModeFallback  = 2
-)
-
 // MediaTypeDef maps a display name to a ScreenScraper API media type string.
 type MediaTypeDef struct {
 	Display string
@@ -605,8 +508,9 @@ type AppSettings struct {
 	SSPassword  string   `json:"ss_password"`
 	ArtworkType string   `json:"artwork_type,omitempty"` // DEPRECATED: migrated to ArtworkPrio
 	ArtworkPrio []string `json:"artwork_priority"`       // priority-ordered media type fallback list
-	Region      string   `json:"region"`                 // "us", "eu", "jp", "wor"
-	ArtworkMode int      `json:"artwork_mode"`           // see ArtworkMode* constants
+	Region      string   `json:"region,omitempty"`       // DEPRECATED: migrated to RegionPrio
+	RegionPrio  []string `json:"region_priority"`        // priority-ordered region fallback list
+	ShowHidden  bool     `json:"show_hidden"`            // include .disabled and dot-prefix folders/ROMs
 }
 
 // ArtworkTypes returns the priority-ordered list of ALL media types.
@@ -650,22 +554,78 @@ func MediaTypeDisplay(value string) string {
 	return value
 }
 
-func (s AppSettings) artworkBgParams() (useGlobalBg, forceBlack bool) {
-	switch s.ArtworkMode {
-	case ArtworkModeWallpaper:
-		return true, true
-	case ArtworkModeFallback:
-		return true, false
-	default:
-		return false, true
+// RegionDef maps a display name to a ScreenScraper API region code.
+type RegionDef struct {
+	Display string
+	Value   string
+}
+
+// AllRegions lists every user-selectable ScreenScraper region.
+// "cus" (custom/homebrew) is omitted here — it is appended automatically by
+// RegionTypes() as a last-resort catch-all and is not user-orderable.
+var AllRegions = []RegionDef{
+	{"World", "wor"},
+	{"USA", "us"},
+	{"Europe", "eu"},
+	{"Japan", "jp"},
+	{"France", "fr"},
+	{"Germany", "de"},
+	{"Spain", "es"},
+	{"Italy", "it"},
+	{"Portugal", "pt"},
+	{"ScreenScraper", "ss"},
+}
+
+// DefaultRegionPriority is the default region fallback order.
+var DefaultRegionPriority = []string{"us", "eu", "jp", "wor"}
+
+// RegionTypes returns the priority-ordered list of ALL regions.
+// The user's saved order comes first; any missing regions are appended.
+// "cus" is always appended last as an automatic catch-all.
+func (s AppSettings) RegionTypes() []string {
+	var base []string
+	if len(s.RegionPrio) > 0 {
+		base = s.RegionPrio
+	} else if s.Region != "" {
+		base = []string{s.Region}
+	} else {
+		base = DefaultRegionPriority
 	}
+
+	seen := map[string]bool{}
+	var full []string
+	for _, v := range base {
+		if !seen[v] {
+			seen[v] = true
+			full = append(full, v)
+		}
+	}
+	for _, r := range AllRegions {
+		if !seen[r.Value] {
+			seen[r.Value] = true
+			full = append(full, r.Value)
+		}
+	}
+	if !seen["cus"] {
+		full = append(full, "cus")
+	}
+	return full
+}
+
+// RegionDisplay returns the display name for a region code.
+func RegionDisplay(value string) string {
+	for _, r := range AllRegions {
+		if r.Value == value {
+			return r.Display
+		}
+	}
+	return value
 }
 
 func defaultSettings() AppSettings {
 	return AppSettings{
 		ArtworkPrio: DefaultArtworkPriority,
-		Region:      "us",
-		ArtworkMode: ArtworkModeWallpaper,
+		RegionPrio:  DefaultRegionPriority,
 	}
 }
 
@@ -693,9 +653,15 @@ func loadSettings() AppSettings {
 			s.ArtworkPrio = DefaultArtworkPriority
 		}
 	}
-	if s.Region == "" {
-		s.Region = "us"
+	// Migrate old single region string → priority list.
+	if len(s.RegionPrio) == 0 {
+		if s.Region != "" {
+			s.RegionPrio = []string{s.Region}
+		} else {
+			s.RegionPrio = DefaultRegionPriority
+		}
 	}
+	s.Region = "" // clear deprecated field after migration
 	return s
 }
 

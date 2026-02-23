@@ -38,6 +38,10 @@ const (
 // On macOS, uses the system git. On embedded platforms, uses the bundled binary.
 func getGitBin() string {
 	if platform == PlatformMac {
+		// Prefer the macOS system git explicitly.
+		if _, err := os.Stat("/usr/bin/git"); err == nil {
+			return "/usr/bin/git"
+		}
 		return "git"
 	}
 	execPath, err := os.Executable()
@@ -50,18 +54,26 @@ func getGitBin() string {
 // checkGitAvailable verifies that git binary exists and is executable.
 func checkGitAvailable() error {
 	gitBin := getGitBin()
-	log.Printf("cheats: git binary: %s", gitBin)
+	resolvedGitBin := gitBin
+	if !strings.ContainsRune(gitBin, os.PathSeparator) {
+		pathGit, err := exec.LookPath(gitBin)
+		if err != nil {
+			return fmt.Errorf("git binary not found in PATH: %s", gitBin)
+		}
+		resolvedGitBin = pathGit
+	}
+	log.Printf("cheats: git binary: %s (resolved: %s)", gitBin, resolvedGitBin)
 
-	info, err := os.Stat(gitBin)
+	info, err := os.Stat(resolvedGitBin)
 	if err != nil {
-		return fmt.Errorf("git binary not found: %s", gitBin)
+		return fmt.Errorf("git binary not found: %s", resolvedGitBin)
 	}
 	if info.IsDir() {
-		return fmt.Errorf("git path is a directory, not a binary: %s", gitBin)
+		return fmt.Errorf("git path is a directory, not a binary: %s", resolvedGitBin)
 	}
 
 	// Try running git --version to verify it works.
-	cmd := exec.Command(gitBin, "--version")
+	cmd := exec.Command(resolvedGitBin, "--version")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git --version failed: %w\noutput: %s", err, string(out))
@@ -323,7 +335,7 @@ func downloadCheatsForConsole(console ConsoleDir, setProgress func(float64), set
 	log.Printf("cheats: %d cheats available for %s", len(cheatList), libretroDir)
 
 	// Scan ROMs.
-	roms, err := scanROMs(console.Path)
+	roms, err := scanROMs(console.Path, false)
 	if err != nil {
 		return ScrapeSummary{}, fmt.Errorf("scan roms: %w", err)
 	}
