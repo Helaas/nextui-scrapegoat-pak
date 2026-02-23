@@ -24,11 +24,6 @@ const (
 
 var platform Platform
 
-// isBrick is true when running on the TrimUI Brick (1024×768).
-// NextUI exports DEVICE="brick" for the Brick and DEVICE="smartpro" for the Smart Pro;
-// both share PLATFORM="tg5040" and the same filesystem layout.
-var isBrick bool
-
 func main() {
 	platform = PlatformTG5040
 	platformEnv := strings.ToUpper(os.Getenv("PLATFORM"))
@@ -39,8 +34,6 @@ func main() {
 	} else if platformEnv == "" && runtime.GOOS == "darwin" {
 		platform = PlatformMac
 	}
-
-	isBrick = strings.EqualFold(os.Getenv("DEVICE"), "brick")
 
 	// On macOS, set ENVIRONMENT=DEV so Gabagool skips power-button handling
 	// (avoids negative WaitGroup panic in closeWindow).
@@ -62,7 +55,7 @@ func main() {
 		}
 	}
 
-	log.Printf("startup: platform=%s device=%s isBrick=%v logPath=%s", platform, os.Getenv("DEVICE"), isBrick, logPath)
+	log.Printf("startup: platform=%s device=%s logPath=%s", platform, os.Getenv("DEVICE"), logPath)
 
 	// Verify ScreenScraper dev credentials were embedded at build time
 	if err := checkDevCredentials(); err != nil {

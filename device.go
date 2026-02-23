@@ -230,63 +230,6 @@ func artworkSrcPath(consoleDirName, displayName string) string {
 	return filepath.Join(getROMsPath(), consoleDirName, ".media", displayName+".png")
 }
 
-// ensureMediaDir creates the .media directory under consoleDir if it doesn't exist.
-func ensureMediaDir(consoleDirPath string) error {
-	return os.MkdirAll(filepath.Join(consoleDirPath, ".media"), 0755)
-}
-
-// findShortcutsForROM scans all shortcut folders in Roms/ and returns the paths of
-// those whose .m3u points into the given consoleDirName for a ROM with the given display name.
-// It uses the .shortcut marker file display name for matching.
-func findShortcutsForROM(consoleDirName, romDisplayName string) ([]string, error) {
-	romsDir := getROMsPath()
-	entries, err := os.ReadDir(romsDir)
-	if err != nil {
-		return nil, fmt.Errorf("reading roms dir: %w", err)
-	}
-
-	var matches []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		fullPath := filepath.Join(romsDir, e.Name())
-		if !isShortcutFolder(fullPath) {
-			continue
-		}
-
-		// Read the .m3u to find which console this shortcut points into.
-		m3uPath := filepath.Join(fullPath, e.Name()+".m3u")
-		data, err := os.ReadFile(m3uPath)
-		if err != nil {
-			continue
-		}
-		relPath := strings.TrimSpace(string(data))
-		// relPath is "../Console Dir (TAG)/game.rom" — extract the console component.
-		parts := strings.SplitN(relPath, "/", 3)
-		if len(parts) < 2 || parts[0] != ".." {
-			continue
-		}
-		if parts[1] != consoleDirName {
-			continue
-		}
-
-		// The shortcut points into our console dir. Check the display name matches.
-		shortcutDisplay := readShortcutMarker(fullPath)
-		if shortcutDisplay == "" {
-			// Fall back to extracting from folder name
-			shortcutDisplay = extractDisplayName(e.Name())
-			shortcutDisplay = strings.TrimPrefix(shortcutDisplay, "\uFEFF")
-			shortcutDisplay = strings.TrimPrefix(shortcutDisplay, "\u2605 ")
-		}
-		if strings.EqualFold(shortcutDisplay, romDisplayName) {
-			matches = append(matches, fullPath)
-		}
-	}
-	log.Printf("findShortcutsForROM: console=%s rom=%s matches=%d", consoleDirName, romDisplayName, len(matches))
-	return matches, nil
-}
-
 // ── MD5 hashing ──────────────────────────────────────────────
 
 // computeMD5 computes the MD5 hex digest of the ROM content.
@@ -467,14 +410,6 @@ func stripExtension(name string) string {
 		return strings.TrimSuffix(name, ext)
 	}
 	return name
-}
-
-func readShortcutMarker(folderPath string) string {
-	data, err := os.ReadFile(filepath.Join(folderPath, shortcutMarkerFile))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
 }
 
 // ── App settings ─────────────────────────────────────────────

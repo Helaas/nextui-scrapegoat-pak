@@ -63,11 +63,10 @@ func showMainMenu() mainAction {
 // ── Scrape Artwork flow ──────────────────────────────────────
 
 func scrapeArtworkFlow() {
-	// Step 1: Check credentials
+	// Step 1: Load settings and warn if user credentials not set
 	settings := loadSettings()
 	if settings.SSUsername == "" {
-		showError("ScreenScraper.fr credentials not set.\n\nPlease configure your username and\npassword in Settings first.")
-		return
+		showWarning("No ScreenScraper.fr user credentials set.\n\nScraping will proceed at basic rate (~1 req/min, single-threaded).\n\nFor much faster speeds, go to Settings and add your username and password.")
 	}
 
 	// Step 2: Pick a console (only show systems with a ScreenScraper ID)
@@ -567,6 +566,15 @@ func showError(message string) {
 	gaba.ConfirmationMessage(message,
 		[]gaba.FooterHelpItem{
 			{ButtonName: "B", HelpText: "Back"},
+		},
+		gaba.MessageOptions{},
+	)
+}
+
+func showWarning(message string) {
+	gaba.ConfirmationMessage(message,
+		[]gaba.FooterHelpItem{
+			{ButtonName: "A", HelpText: "Continue"},
 		},
 		gaba.MessageOptions{},
 	)

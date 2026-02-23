@@ -41,7 +41,7 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 
 ### Scrape Artwork
 
-1. **Verify ScreenScraper credentials** — Username and password must be set in Settings first (see [Credentials](#credentials) below)
+1. **Launch the scrape** — The app uses embedded developer credentials. For optimal speeds, configure your ScreenScraper.fr user credentials in Settings (see [Credentials](#credentials) below).
 2. **Pick a console** — Choose which system to scrape (only systems with ScreenScraper support are shown)
 3. **Choose scrape mode:**
    - **Scrape missing only** — Skip games that already have artwork, faster for reruns
@@ -78,16 +78,22 @@ Configure your ScreenScraper credentials, customize artwork and region priority,
 
 #### ScreenScraper Credentials
 
-**Username** — Your ScreenScraper.fr login (optional, but recommended for higher rate limits)
-- Used to authenticate API requests
-- Gives you a higher daily quota and more concurrent threads
+**Developer Credentials** (embedded at build time)
+- Your ScrapeGoat binary includes embedded ScreenScraper.fr developer credentials
+- These enable scraping at **limited rate**: ~1 request per minute, single-threaded
+- Required; the app will not function without them
+
+**User Credentials** (configured in Settings) — *Optional*
+- Your personal ScreenScraper.fr username and password
+- Greatly increases rate limit: 100+ requests per minute
+- Enables multi-threaded scraping (threads based on your API tier)
 - Saved locally in `~/.userdata/shared/ScrapeGoat/settings.json` (never committed to git)
+- Leave blank if you prefer to scrape at the basic rate with developer credentials only
 
-**Password** — Your ScreenScraper.fr password (optional, but recommended)
-- Must be set together with username for any effect
-- Saved locally, not shared
-
-If neither username nor password is set, you're limited to ~1 API request per minute.
+**In summary:**
+- Without user credentials: Scraping works but is slow (~1 req/min, single-threaded)
+- With user credentials: Much faster (100+ req/min, multiple threads possible depending on your user level)
+- User credentials are **always optional** — the app works either way
 
 #### Artwork Priority
 
@@ -176,13 +182,34 @@ Cheat files are matched to your ROMs by normalized game name. If a cheat file al
 
 ## Credentials
 
-**User credentials (optional):**
-- Separate from developer credentials
-- Configured via the **Settings** screen in ScrapeGoat
-- Stored locally on your device only
-- Enables higher rate limits and more concurrent threads
+### How Credentials Work
 
-> User credentials are stored on your device in `~/.userdata/shared/ScrapeGoat/settings.json`.
+ScrapeGoat uses two types of ScreenScraper.fr credentials:
+
+**1. Developer Credentials** (embedded in the binary)
+- Provided by ScreenScraper.fr for application developers
+- Embedded at **build time** via the Makefile (`-ldflags`)
+- Required for any scraping to work
+- Provides basic API access (~1 request/minute, single-threaded)
+- Used by maintainers building the ScrapeGoat binary; end users don't need to obtain these separately
+
+**2. User Credentials** (configured via Settings) — *Optional for faster scraping*
+- Your personal ScreenScraper.fr username and password
+- Stored locally on your device in `~/.userdata/shared/ScrapeGoat/settings.json`
+- When configured, provides much higher rate limits (100+ requests/minute, multiple threads)
+- Configure via **Settings → Username/Password** in the app
+- Leave empty if you prefer basic speed with developer credentials only
+
+### Getting User Credentials (Optional)
+
+If you want faster scraping speeds:
+
+1. Visit [screenscraper.fr](https://www.screenscraper.fr/)
+2. Create an account
+3. In the app, go to **Settings** and enter your ScreenScraper.fr username and password
+4. Now your scrapes will use your personal account's higher rate limits
+
+Without user credentials, scraping still works but at ~1 request per minute (single-threaded).
 
 ## Logging
 
@@ -213,19 +240,25 @@ brew install go sdl2 sdl2_ttf sdl2_image sdl2_gfx
 
 ### First-Time Setup
 
-Create `.env.local` with your ScreenScraper.fr developer credentials (see [Credentials](#credentials)):
+> **Note:** Only developers/maintainers building the ScrapeGoat binary need to do this. If you're installing a pre-built `.pak` or `.pakz`, skip to [Installing on a Handheld](#installing-on-a-handheld).
+
+If you're building from source, you need ScreenScraper.fr **developer credentials** to embed in the binary:
+
+1. Visit [screenscraper.fr](https://www.screenscraper.fr/) and request developer API access
+2. You'll receive developer ID and password
+3. Create `.env.local` with your developer credentials:
 
 ```bash
 cp .env.example .env.local
 ```
 
-Then edit `.env.local` and add:
+4. Edit `.env.local` and add:
 ```bash
 SCREENSCRAPER_DEV_ID=your_dev_id
 SCREENSCRAPER_DEV_PASSWORD=your_dev_password
 ```
 
-These are embedded in the binary at build time. The `.env.local` file is in `.gitignore` and will never be committed.
+These are embedded in the binary at build time via the Makefile. The `.env.local` file is in `.gitignore` and will never be committed.
 
 To download and vendor dependencies:
 ```bash

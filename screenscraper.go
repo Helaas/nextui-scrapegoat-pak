@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -32,7 +31,6 @@ const (
 	ssAPIBase   = "https://api.screenscraper.fr/api2"
 	ssSoftName  = "ScrapeGoat-v1.0.0"
 	ssUserAgent = "ScrapeGoat/1.0.0"
-	ssRateDelay = 500 * time.Millisecond // courtesy delay for single-threaded mode
 )
 
 // Build-time variables injected via -ldflags from .env.local.
@@ -376,9 +374,15 @@ func (c *SSClient) DownloadMedia(ctx context.Context, mediaURL, destPath string)
 		if err != nil {
 			return fmt.Errorf("create file: %w", err)
 		}
-		defer f.Close()
-		_, err = io.Copy(f, resp.Body)
-		return err
+		if _, err = io.Copy(f, resp.Body); err != nil {
+			f.Close()
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			f.Close()
+			return err
+		}
+		return f.Close()
 	}
 
 	// Decode JPEG and re-encode as PNG.
@@ -391,8 +395,15 @@ func (c *SSClient) DownloadMedia(ctx context.Context, mediaURL, destPath string)
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer f.Close()
-	return png.Encode(f, img)
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // ── Quota ────────────────────────────────────────────────────
@@ -707,6 +718,3 @@ func scrapeOneROM(ctx context.Context, client *SSClient, rom ROMFile, console Co
 	log.Printf("scrapeConsole: saved artwork for %s → %s", rom.Display, destPath)
 	return result
 }
-
-// Ensure image package decoders are registered.
-var _ image.Image = (*image.NRGBA)(nil)

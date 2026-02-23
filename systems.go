@@ -119,10 +119,3 @@ var SSDisplayNames = map[string]string{
 	"VIC":    "VIC-20",
 }
 
-// systemDisplayName returns the human-readable name for a tag, falling back to the tag itself.
-func systemDisplayName(tag string) string {
-	if name, ok := SSDisplayNames[tag]; ok {
-		return name
-	}
-	return tag
-}
