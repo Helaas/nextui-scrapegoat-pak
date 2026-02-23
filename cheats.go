@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/BrandonKowalski/certifiable"
+	uatomic "go.uber.org/atomic"
 )
 
 // cheats.go — Git-based Libretro cheat file manager.
@@ -299,7 +300,7 @@ func MatchCheat(romDisplayName string, list CheatList) (string, bool) {
 // ── Console cheat downloader ─────────────────────────────────
 
 // downloadCheatsForConsole downloads cheats for all ROMs in a console directory.
-func downloadCheatsForConsole(console ConsoleDir, setProgress func(float64), setMessage func(string)) (ScrapeSummary, error) {
+func downloadCheatsForConsole(console ConsoleDir, interruptSignal *uatomic.Int32, setProgress func(float64), setMessage func(string)) (ScrapeSummary, error) {
 	libretroDir, ok := LibretroSystemDirs[console.Tag]
 	if !ok {
 		return ScrapeSummary{}, fmt.Errorf("no Libretro cheat directory for system %s", console.Tag)
@@ -345,6 +346,10 @@ func downloadCheatsForConsole(console ConsoleDir, setProgress func(float64), set
 	cheatsDir := filepath.Join(getCheatsPath(), console.Tag)
 
 	for i, rom := range roms {
+		if interruptSignal != nil && interruptSignal.Load() != 0 {
+			log.Printf("cheats: interrupted by user after %d/%d ROMs", i, len(roms))
+			break
+		}
 		setProgress(float64(i) / float64(len(roms)))
 		setMessage(fmt.Sprintf("(%d/%d) %s", i+1, len(roms), rom.Display))
 

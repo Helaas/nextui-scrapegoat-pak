@@ -201,7 +201,7 @@ func (c *SSClient) searchROMRequest(ctx context.Context, romName, md5Hash string
 	}
 	req.Header.Set("User-Agent", ssUserAgent)
 
-	resp, err := c.client.Do(req)
+	resp, err := c.doWithRetry(ctx, req, 2)
 	if err != nil {
 		return nil, fmt.Errorf("http get: %w", err)
 	}
@@ -287,6 +287,58 @@ func checkHTTPStatus(status int) error {
 	}
 }
 
+// isRetryable returns true if an HTTP status code or network error should be retried.
+func isRetryable(err error, statusCode int) bool {
+	if err != nil {
+		// Network errors (timeouts, connection resets, DNS failures) are retryable
+		// unless the context was cancelled.
+		return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+	}
+	return statusCode >= 500
+}
+
+// doWithRetry executes an HTTP request with up to maxRetries retries using
+// exponential backoff for transient failures (5xx, network errors).
+// It does NOT retry on 4xx client errors or context cancellation.
+func (c *SSClient) doWithRetry(ctx context.Context, req *http.Request, maxRetries int) (*http.Response, error) {
+	var resp *http.Response
+	var err error
+	backoff := 1 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			log.Printf("doWithRetry: attempt %d/%d after %v", attempt+1, maxRetries+1, backoff)
+
+			// Clone request for retry (body is nil for GET requests).
+			req = req.Clone(ctx)
+
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+
+		resp, err = c.client.Do(req)
+		if err != nil {
+			if isRetryable(err, 0) && attempt < maxRetries {
+				log.Printf("doWithRetry: network error (will retry): %v", err)
+				continue
+			}
+			return nil, err
+		}
+
+		if isRetryable(nil, resp.StatusCode) && attempt < maxRetries {
+			log.Printf("doWithRetry: server error %d (will retry)", resp.StatusCode)
+			resp.Body.Close()
+			continue
+		}
+		return resp, nil
+	}
+	return resp, err
+}
+
 // ── Media / name resolution ──────────────────────────────────
 
 // resolveMedia finds the best media URL by trying each type in priority order.
@@ -352,7 +404,7 @@ func (c *SSClient) DownloadMedia(ctx context.Context, mediaURL, destPath string)
 	}
 	req.Header.Set("User-Agent", ssUserAgent)
 
-	resp, err := c.client.Do(req)
+	resp, err := c.doWithRetry(ctx, req, 2)
 	if err != nil {
 		return fmt.Errorf("http get: %w", err)
 	}

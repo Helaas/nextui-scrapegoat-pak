@@ -12,15 +12,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
 )
 
 // ── Device paths ─────────────────────────────────────────────
 
 const (
 	sdcardPath = "/mnt/SDCARD"
-	romsPath   = sdcardPath + "/Roms"
-	cheatsPath = sdcardPath + "/Cheats"
 )
 
 // shortcutMarkerFile is the hidden marker file written by nextui-shortcuts-pak

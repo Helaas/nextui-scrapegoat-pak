@@ -226,15 +226,22 @@ func downloadCheatsFlow() {
 	var progress atomic.Float64
 	progress.Store(0.0)
 
+	var interruptSignal atomic.Int32
+
 	summary, err := gaba.ProcessMessage(
 		fmt.Sprintf("Downloading cheats for %s...", console.Display),
 		gaba.ProcessMessageOptions{
 			ShowThemeBackground: true,
 			ShowProgressBar:     true,
 			Progress:            &progress,
+			InterruptButton:     constants.VirtualButtonY,
+			InterruptSignal:     &interruptSignal,
+			FooterHelpItems: []gaba.FooterHelpItem{
+				{ButtonName: "Y", HelpText: "Stop"},
+			},
 		},
 		func() (ScrapeSummary, error) {
-			return downloadCheatsForConsole(console,
+			return downloadCheatsForConsole(console, &interruptSignal,
 				func(p float64) { progress.Store(p) },
 				func(msg string) { log.Printf("cheats: %s", msg) },
 			)

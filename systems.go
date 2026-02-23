@@ -118,4 +118,3 @@ var SSDisplayNames = map[string]string{
 	"VB":     "Virtual Boy",
 	"VIC":    "VIC-20",
 }
-
