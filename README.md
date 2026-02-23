@@ -67,7 +67,7 @@ Supported systems for artwork (32 total):
 2. **Watch the download progress** — Shows current ROM being matched
 3. **Review summary** — See Total / Downloaded / Not Found / Errors
 
-The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name (strips region tags like `(USA)`, punctuation, and whitespace).
+The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name. When multiple cheat files exist for the same game (e.g. different regions), ScrapeGoat picks the one that best matches your ROM's region and your configured region priority. See [How Matching Works](#how-matching-works) for details.
 
 Supported systems for cheats (23 total):
 Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, SNES/SFC, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600/5200/7800, Lynx, ColecoVision, MSX, SG-1000
@@ -149,6 +149,45 @@ Turn this **On** to include those entries in your scrape. Useful if you want to 
 | Option | Default |
 |--------|---------|
 | Show hidden/disabled | **Off** |
+
+## How Matching Works
+
+### Artwork (ScreenScraper)
+
+When scraping artwork, each ROM is identified through a two-step lookup against the [ScreenScraper.fr](https://www.screenscraper.fr) API:
+
+1. **MD5 hash match** — ScrapeGoat computes the MD5 checksum and file size of the ROM content and sends them to the API. This is the most accurate method because it identifies the exact ROM dump regardless of filename.
+   - For **zip archives**, the largest file inside the zip is hashed (the actual ROM, not the archive itself).
+   - For **multi-disc folders** (containing an `.m3u` file) and **CUE/BIN folders** (containing a `.cue` file), the primary disc image is hashed (first track found by extension priority: `.chd` → `.iso` → `.bin` → `.img`).
+2. **Filename fallback** — If the hash lookup returns no results (e.g. a patched ROM or homebrew), ScrapeGoat retries using the ROM filename only.
+
+If neither method finds a match, the ROM is counted as "Not Found" in the summary.
+
+Once a game is identified, ScrapeGoat picks the best artwork using your **Artwork Priority** list (e.g. Box art 2D → Box art 3D → Mix → Screenshots) and **Region Priority** list (e.g. USA → Europe → Japan → World). It tries each artwork type in order, and for each type tries your preferred regions first.
+
+### Cheats (Libretro)
+
+Cheat matching uses **normalized name comparison** between your ROM filenames and the [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) filenames:
+
+1. Both the ROM display name (filename without extension) and the cheat filename are normalized by:
+   - Stripping all parenthetical groups — `(USA)`, `(Europe)`, `(Rev 1)`, `(Code Breaker)`, etc.
+   - Converting to lowercase
+   - Removing all punctuation
+   - Collapsing whitespace
+2. If the normalized names match exactly, the cheat file is a candidate.
+
+**Region-aware selection:** The Libretro cheat database often contains multiple cheat files for the same game with different region tags (e.g. `Castlevania (USA) (Code Breaker).cht` and `Castlevania (Europe) (Code Breaker).cht`). When multiple candidates match the same ROM, ScrapeGoat picks the best one using this priority:
+
+1. **Direct region overlap** — A cheat file whose region tags match the ROM's region tags is preferred. For example, a `(USA)` ROM will prefer a `(USA)` or `(USA, Europe)` cheat over a `(Japan)` one.
+2. **World** — A cheat tagged `(World)` is treated as universal and preferred over a region mismatch.
+3. **User's region priority** — If no direct match exists, your configured **Region Priority** (from Settings) is used as a tiebreaker.
+4. **No region tag** — Cheats without any region marker are used as a neutral fallback.
+
+Region keywords are recognized from parenthetical groups in filenames: `USA`, `Europe`, `Japan`, `World`, `France`, `Germany`, `Spain`, `Italy`, `Portugal`, `Australia`, `Korea`, `China`, `Taiwan`, and their common abbreviations (`US`, `EU`, `JP`, `FR`, `DE`, etc.). Non-region tags like `(Code Breaker)`, `(SGB Enhanced)`, and `(Rev 1)` are ignored.
+
+For example, if you have `Pokemon - Emerald Version (USA, Europe).gba` and the Libretro database has both `Pokemon - Emerald Version (USA, Europe) (Code Breaker).cht` and `Pokemon - Feuerrote Edition (G).cht`, only the first matches (both normalize to `pokemon emerald version`). If there were a `(Japan)` variant too, the `(USA, Europe)` one would be selected because it directly overlaps with the ROM's regions.
+
+Existing cheat files on your device are never overwritten — if a `.cht` already exists for a ROM, it is skipped.
 
 ## Artwork Storage
 

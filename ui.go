@@ -241,7 +241,7 @@ func downloadCheatsFlow() {
 			},
 		},
 		func() (ScrapeSummary, error) {
-			return downloadCheatsForConsole(console, &interruptSignal,
+			return downloadCheatsForConsole(console, settings.RegionTypes(), &interruptSignal,
 				func(p float64) { progress.Store(p) },
 				func(msg string) { log.Printf("cheats: %s", msg) },
 			)

@@ -243,13 +243,76 @@ func updateCheatRepo(setMessage func(string)) error {
 
 // ── Cheat matching ───────────────────────────────────────────
 
-// CheatList maps normalized game name → local .cht file path.
-type CheatList map[string]string
+// cheatCandidate represents a single .cht file with its extracted region metadata.
+type cheatCandidate struct {
+	Path    string
+	Regions []string // normalized SS region codes: "us", "eu", "jp", "wor", etc.
+}
+
+// CheatList maps normalized game name → list of cheat file candidates.
+type CheatList map[string][]cheatCandidate
 
 var parenthetical = regexp.MustCompile(`\s*\([^)]*\)`)
 
+// cheatRegionMap maps region keywords found in cheat/ROM filenames to
+// ScreenScraper region codes. Only full words and 2-letter abbreviations
+// are included to avoid false positives from tags like (Code Breaker).
+var cheatRegionMap = map[string]string{
+	// Full names (as used in Libretro cheat database)
+	"usa":       "us",
+	"europe":    "eu",
+	"japan":     "jp",
+	"world":     "wor",
+	"france":    "fr",
+	"germany":   "de",
+	"spain":     "es",
+	"italy":     "it",
+	"portugal":  "pt",
+	"australia": "eu",
+	"korea":     "kr",
+	"china":     "cn",
+	"taiwan":    "tw",
+	"brazil":    "pt",
+	// Common 2-letter abbreviations (from ROM naming conventions)
+	"us": "us",
+	"eu": "eu",
+	"jp": "jp",
+	"fr": "fr",
+	"de": "de",
+	"es": "es",
+	"it": "it",
+	"pt": "pt",
+	"kr": "kr",
+	"cn": "cn",
+	"tw": "tw",
+}
+
+// extractCheatRegions parses parenthetical groups from a filename and returns
+// any recognized region codes (normalized to ScreenScraper codes).
+// Example: "Pokemon - Emerald Version (USA, Europe) (Code Breaker)"
+//
+//	→ ["us", "eu"]
+func extractCheatRegions(name string) []string {
+	matches := parenthetical.FindAllString(name, -1)
+	var regions []string
+	seen := map[string]bool{}
+	for _, m := range matches {
+		inner := strings.Trim(m, " ()")
+		for _, part := range strings.Split(inner, ",") {
+			part = strings.TrimSpace(part)
+			if code, ok := cheatRegionMap[strings.ToLower(part)]; ok {
+				if !seen[code] {
+					seen[code] = true
+					regions = append(regions, code)
+				}
+			}
+		}
+	}
+	return regions
+}
+
 // normalizeCheatName normalizes a game name for fuzzy matching:
-//  1. Strip parenthetical groups: (USA), (Europe), (Rev 1), etc.
+//  1. Strip parenthetical groups: (USA), (Europe), (Rev 1), (Code Breaker), etc.
 //  2. Lowercase
 //  3. Strip punctuation
 //  4. Collapse whitespace
@@ -267,7 +330,8 @@ func normalizeCheatName(name string) string {
 }
 
 // BuildCheatListFromRepo scans the local checkout for .cht files
-// and builds a CheatList for matching.
+// and builds a CheatList for matching. Multiple cheat files with the
+// same normalized name (but different regions) are stored as candidates.
 func BuildCheatListFromRepo(libretroDir string) (CheatList, error) {
 	chtDir := filepath.Join(getCheatRepoPath(), "cht", libretroDir)
 
@@ -277,30 +341,117 @@ func BuildCheatListFromRepo(libretroDir string) (CheatList, error) {
 	}
 
 	list := make(CheatList, len(entries))
+	var fileCount int
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".cht") {
 			continue
 		}
 		gameName := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		normalized := normalizeCheatName(gameName)
-		list[normalized] = filepath.Join(chtDir, entry.Name())
+		regions := extractCheatRegions(gameName)
+		list[normalized] = append(list[normalized], cheatCandidate{
+			Path:    filepath.Join(chtDir, entry.Name()),
+			Regions: regions,
+		})
+		fileCount++
 	}
+	log.Printf("cheats: indexed %d files into %d unique names for %s", fileCount, len(list), libretroDir)
 	return list, nil
 }
 
 // MatchCheat finds the best matching cheat file path for a ROM display name.
-func MatchCheat(romDisplayName string, list CheatList) (string, bool) {
+// When multiple cheat files match the same normalized name, the candidate
+// whose region tags best match the ROM's regions (or the user's region
+// priority) is preferred.
+func MatchCheat(romDisplayName string, list CheatList, regionPrio []string) (string, bool) {
 	normalized := normalizeCheatName(romDisplayName)
-	if path, ok := list[normalized]; ok {
-		return path, true
+	candidates, ok := list[normalized]
+	if !ok || len(candidates) == 0 {
+		return "", false
 	}
-	return "", false
+	if len(candidates) == 1 {
+		return candidates[0].Path, true
+	}
+
+	// Multiple candidates — pick the best by region.
+	romRegions := extractCheatRegions(romDisplayName)
+	best := pickBestCheatCandidate(candidates, romRegions, regionPrio)
+	log.Printf("cheats: %d candidates for %q, picked %s (romRegions=%v)",
+		len(candidates), romDisplayName, filepath.Base(best), romRegions)
+	return best, true
+}
+
+// pickBestCheatCandidate selects the best cheat file from multiple candidates
+// based on region overlap with the ROM and the user's region priority.
+func pickBestCheatCandidate(candidates []cheatCandidate, romRegions, regionPrio []string) string {
+	bestScore := -1
+	bestPath := candidates[0].Path
+
+	for _, c := range candidates {
+		score := scoreCheatRegionMatch(c.Regions, romRegions, regionPrio)
+		if score > bestScore {
+			bestScore = score
+			bestPath = c.Path
+		}
+	}
+	return bestPath
+}
+
+// scoreCheatRegionMatch scores how well a cheat file's regions match:
+//
+//	1000+ = direct region overlap with ROM (best)
+//	 500  = cheat is "World" (universal)
+//	 100  = cheat matches user's region priority (decreasing by position)
+//	  50  = cheat has no region info (neutral fallback)
+//	   0  = no match at all
+func scoreCheatRegionMatch(cheatRegions, romRegions, regionPrio []string) int {
+	// Highest: direct region overlap with ROM.
+	if len(romRegions) > 0 && len(cheatRegions) > 0 {
+		overlap := 0
+		for _, cr := range cheatRegions {
+			for _, rr := range romRegions {
+				if cr == rr {
+					overlap++
+				}
+			}
+		}
+		if overlap > 0 {
+			return 1000 + overlap
+		}
+	}
+
+	// Medium: "World" cheat is universal.
+	for _, r := range cheatRegions {
+		if r == "wor" {
+			return 500
+		}
+	}
+
+	// Low: matches user's configured region priority.
+	if len(cheatRegions) > 0 && len(regionPrio) > 0 {
+		for i, prio := range regionPrio {
+			for _, r := range cheatRegions {
+				if r == prio {
+					return 100 - i
+				}
+			}
+		}
+	}
+
+	// Neutral: no region info at all (some cheats have no region tag).
+	if len(cheatRegions) == 0 {
+		return 50
+	}
+
+	return 0
 }
 
 // ── Console cheat downloader ─────────────────────────────────
 
 // downloadCheatsForConsole downloads cheats for all ROMs in a console directory.
-func downloadCheatsForConsole(console ConsoleDir, interruptSignal *uatomic.Int32, setProgress func(float64), setMessage func(string)) (ScrapeSummary, error) {
+// regionPrio is the user's region priority (ScreenScraper codes) used to pick
+// the best cheat file when multiple region variants exist.
+func downloadCheatsForConsole(console ConsoleDir, regionPrio []string, interruptSignal *uatomic.Int32, setProgress func(float64), setMessage func(string)) (ScrapeSummary, error) {
 	libretroDir, ok := LibretroSystemDirs[console.Tag]
 	if !ok {
 		return ScrapeSummary{}, fmt.Errorf("no Libretro cheat directory for system %s", console.Tag)
@@ -353,7 +504,7 @@ func downloadCheatsForConsole(console ConsoleDir, interruptSignal *uatomic.Int32
 		setProgress(float64(i) / float64(len(roms)))
 		setMessage(fmt.Sprintf("(%d/%d) %s", i+1, len(roms), rom.Display))
 
-		srcPath, found := MatchCheat(rom.Display, cheatList)
+		srcPath, found := MatchCheat(rom.Display, cheatList, regionPrio)
 		if !found {
 			log.Printf("cheats: no match for %s", rom.Display)
 			summary.NotFound++
