@@ -1,0 +1,41 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Credential files
+secrets/
+credentials.json
+
+# User settings (contains user credentials)
+.userdata/
+
+# MacOS test env
+mock_sdcard/
+
+# Build artifacts & compiled binaries
+/build/
+/dist/
+/.cache/
+*.o
+*.a
+*.so
+.DS_Store
+*.dylib
+*.deb
+*.rpm
+
+# Vendor & dependencies (leave vendor/ in repo, but ignore common patterns)
+vendor/*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temp files
+*.tmp
+*.log
+nextui-scrapegoat-pak
