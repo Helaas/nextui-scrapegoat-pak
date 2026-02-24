@@ -643,11 +643,12 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, i
 				}
 
 				line1 := fmt.Sprintf("ROMs left: %d / %d", remaining, scrapeTotal)
-				line2 := fmt.Sprintf("Threads: %d  •  ETA: %s", threads, etaStr)
+				line2 := fmt.Sprintf("Threads: %d - ETA: %s", threads, etaStr)
+				msg := line1 + "\n" + line2
 				if maxReq > 0 {
-					line2 += fmt.Sprintf("  •  Quota: %d/%d", reqToday, maxReq)
+					msg += fmt.Sprintf("\nQuota: %d / %d", reqToday, maxReq)
 				}
-				setMessage(line1 + "\n" + line2)
+				setMessage(msg)
 			case <-stopHUD:
 				return
 			}

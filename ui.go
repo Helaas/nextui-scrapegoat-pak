@@ -103,6 +103,7 @@ func scrapeArtworkFlow() {
 			ShowProgressBar:     true,
 			Progress:            &progress,
 			DynamicMessage:      &dynMsg,
+			MessageLines:        3,
 			InterruptButton:     constants.VirtualButtonY,
 			InterruptSignal:     &interruptSignal,
 			FooterHelpItems: []gaba.FooterHelpItem{

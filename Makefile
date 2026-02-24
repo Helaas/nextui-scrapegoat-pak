@@ -222,6 +222,7 @@ clean-go-sdk:
 
 GABAGOOL_INIT := vendor/github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/init.go
 GABAGOOL_NEXTVAL := vendor/github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/platform/nextui/theming.go
+GABAGOOL_PROCESS_MSG := vendor/github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/process_message.go
 CERTIFIABLE := vendor/github.com/BrandonKowalski/certifiable/certifiable.go
 
 patch-vendor:
@@ -250,6 +251,14 @@ patch-vendor:
 		echo "Patch applied."; \
 	else \
 		echo "Certifiable CACerts patch already applied (or vendor not present)."; \
+	fi
+	@if [ -f "$(GABAGOOL_PROCESS_MSG)" ] && ! grep -q 'MessageLines' "$(GABAGOOL_PROCESS_MSG)"; then \
+		echo "Patching Gabagool ProcessMessage for configurable line count..."; \
+		cd "$(CURDIR)" && git apply --whitespace=nowarn patches/gabagool-message-lines.patch 2>/dev/null || \
+			patch -p1 < patches/gabagool-message-lines.patch; \
+		echo "Patch applied."; \
+	else \
+		echo "Gabagool MessageLines patch already applied (or vendor not present)."; \
 	fi
 
 # ── Dependency management ────────────────────────────────────
