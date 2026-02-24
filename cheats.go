@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -8,8 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unicode"
 
 	"github.com/BrandonKowalski/certifiable"
@@ -166,6 +172,132 @@ func runGit(cmd *exec.Cmd) (string, error) {
 	return outStr, nil
 }
 
+// splitCRLF is a bufio.SplitFunc that splits on \r, \n, or \r\n.
+// This is needed because git writes progress lines using \r to overwrite
+// the current terminal line rather than emitting a new \n-terminated line.
+func splitCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i, b := range data {
+		if b == '\r' || b == '\n' {
+			end := i + 1
+			if b == '\r' && end < len(data) && data[end] == '\n' {
+				end++
+			}
+			return end, data[:i], nil
+		}
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
+// gitProgressRe matches git's "Receiving objects: N%" progress lines.
+var gitProgressRe = regexp.MustCompile(`Receiving objects:\s+(\d+)%`)
+
+// parseGitProgressLine extracts a [0,1] progress value from a git output line.
+func parseGitProgressLine(line string) (float64, bool) {
+	m := gitProgressRe.FindStringSubmatch(line)
+	if m == nil {
+		return 0, false
+	}
+	n, _ := strconv.Atoi(m[1])
+	return float64(n) / 100.0, true
+}
+
+// removeGitLocks removes stale git lock files that a previously killed git
+// process may have left behind. Called before every git command.
+func removeGitLocks() {
+	repoPath := getCheatRepoPath()
+	locks := []string{
+		filepath.Join(repoPath, ".git", "index.lock"),
+		filepath.Join(repoPath, ".git", "info", "sparse-checkout.lock"),
+	}
+	for _, lock := range locks {
+		if err := os.Remove(lock); err == nil {
+			log.Printf("cheats: removed stale lock file: %s", lock)
+		}
+	}
+}
+
+// runGitStreaming runs a git command with real-time progress and interrupt support.
+// It reads stderr line-by-line (splitting on \r or \n) and calls setProgress
+// whenever a "Receiving objects: N%" line is detected.
+// If interruptSignal becomes non-zero the git process is killed within ~16ms.
+// Returns context.Canceled when killed by the interrupt signal.
+func runGitStreaming(cmd *exec.Cmd, interruptSignal *uatomic.Int32, setProgress func(float64)) (string, error) {
+	removeGitLocks()
+	log.Printf("cheats: exec %s %v", cmd.Path, cmd.Args[1:])
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("stderr pipe: %w", err)
+	}
+	var stdoutBuf strings.Builder
+	cmd.Stdout = &stdoutBuf
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start: %w", err)
+	}
+
+	// Interrupt watcher: kills the process within ~16ms of the signal being set.
+	done := make(chan struct{})
+	var killed int32
+	go func() {
+		ticker := time.NewTicker(16 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if interruptSignal != nil && interruptSignal.Load() != 0 {
+					atomic.StoreInt32(&killed, 1)
+					if cmd.Process != nil {
+						_ = cmd.Process.Kill()
+					}
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	// Stream stderr, parse progress lines.
+	var stderrLines []string
+	scanner := bufio.NewScanner(stderrPipe)
+	scanner.Split(splitCRLF)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line != "" {
+			stderrLines = append(stderrLines, line)
+		}
+		if p, ok := parseGitProgressLine(line); ok && setProgress != nil {
+			setProgress(p)
+		}
+	}
+
+	waitErr := cmd.Wait()
+	close(done)
+
+	combined := stdoutBuf.String()
+	if len(stderrLines) > 0 {
+		combined += strings.Join(stderrLines, "\n")
+	}
+
+	if atomic.LoadInt32(&killed) != 0 {
+		return combined, context.Canceled
+	}
+	if waitErr != nil {
+		log.Printf("cheats: git error: %v\noutput: %s", waitErr, combined)
+		return combined, waitErr
+	}
+	if combined != "" {
+		log.Printf("cheats: git output:\n%s", combined)
+	}
+	return combined, nil
+}
+
 // ── Sparse checkout management ───────────────────────────────
 
 // isRepoInitialized checks if the cheat repo has been cloned.
@@ -176,7 +308,7 @@ func isRepoInitialized() bool {
 }
 
 // initCheatRepo performs the initial shallow sparse clone.
-func initCheatRepo(setMessage func(string)) error {
+func initCheatRepo(interruptSignal *uatomic.Int32, setMessage func(string), setProgress func(float64)) error {
 	repoPath := getCheatRepoPath()
 	if err := os.MkdirAll(filepath.Dir(repoPath), 0755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
@@ -197,11 +329,12 @@ func initCheatRepo(setMessage func(string)) error {
 		"--branch", cheatRepoBranch,
 		"--single-branch",
 		"--no-tags",
+		"--progress", // force progress output even when not a tty
 		cheatRepoURL,
 		repoPath,
 	)
 
-	if _, err := runGit(cmd); err != nil {
+	if _, err := runGitStreaming(cmd, interruptSignal, setProgress); err != nil {
 		return fmt.Errorf("clone failed: %w", err)
 	}
 	return nil
@@ -209,7 +342,7 @@ func initCheatRepo(setMessage func(string)) error {
 
 // ensureSystemCheckedOut makes sure a specific system's cheat directory
 // is included in the sparse checkout.
-func ensureSystemCheckedOut(libretroDir string, setMessage func(string)) error {
+func ensureSystemCheckedOut(libretroDir string, interruptSignal *uatomic.Int32, setMessage func(string), setProgress func(float64)) error {
 	localDir := filepath.Join(getCheatRepoPath(), "cht", libretroDir)
 	if info, err := os.Stat(localDir); err == nil && info.IsDir() {
 		return nil // already checked out
@@ -220,19 +353,19 @@ func ensureSystemCheckedOut(libretroDir string, setMessage func(string)) error {
 	log.Printf("cheats: sparse-checkout add %s", chtPath)
 
 	cmd := gitCmdInRepo("sparse-checkout", "add", chtPath)
-	if _, err := runGit(cmd); err != nil {
+	if _, err := runGitStreaming(cmd, interruptSignal, setProgress); err != nil {
 		return err
 	}
 	return nil
 }
 
 // updateCheatRepo pulls the latest changes.
-func updateCheatRepo(setMessage func(string)) error {
+func updateCheatRepo(interruptSignal *uatomic.Int32, setMessage func(string), setProgress func(float64)) error {
 	setMessage("Updating cheat database...")
 	log.Printf("cheats: pulling latest changes")
 
-	cmd := gitCmdInRepo("pull", "--ff-only")
-	out, err := runGit(cmd)
+	cmd := gitCmdInRepo("pull", "--ff-only", "--progress")
+	out, err := runGitStreaming(cmd, interruptSignal, setProgress)
 	if err != nil {
 		return err
 	}
@@ -459,21 +592,37 @@ func downloadCheatsForConsole(console ConsoleDir, regionPrio []string, interrupt
 
 	setProgress(0.0)
 
-	// Initialize or update the git repo.
+	// scaleProgress maps a sub-range [offset, offset+scale] onto the overall [0,1] bar.
+	scaleProgress := func(scale, offset float64) func(float64) {
+		return func(p float64) { setProgress(offset + p*scale) }
+	}
+
+	// Initialize or update the git repo (progress [0.0, 0.3]).
 	if !isRepoInitialized() {
-		if err := initCheatRepo(setMessage); err != nil {
+		if err := initCheatRepo(interruptSignal, setMessage, scaleProgress(0.3, 0.0)); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return ScrapeSummary{}, nil
+			}
 			return ScrapeSummary{}, fmt.Errorf("init cheat repo: %w", err)
 		}
 	} else {
-		if err := updateCheatRepo(setMessage); err != nil {
+		if err := updateCheatRepo(interruptSignal, setMessage, scaleProgress(0.3, 0.0)); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return ScrapeSummary{}, nil
+			}
 			log.Printf("cheats: pull failed (will use existing data): %v", err)
 		}
 	}
+	setProgress(0.3)
 
-	// Ensure this system's cheats are checked out.
-	if err := ensureSystemCheckedOut(libretroDir, setMessage); err != nil {
+	// Ensure this system's cheats are checked out (progress [0.3, 0.5]).
+	if err := ensureSystemCheckedOut(libretroDir, interruptSignal, setMessage, scaleProgress(0.2, 0.3)); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return ScrapeSummary{}, nil
+		}
 		return ScrapeSummary{}, fmt.Errorf("checkout %s: %w", libretroDir, err)
 	}
+	setProgress(0.5)
 
 	// Build cheat list from local files.
 	setMessage("Building cheat list...")
@@ -501,7 +650,8 @@ func downloadCheatsForConsole(console ConsoleDir, regionPrio []string, interrupt
 			log.Printf("cheats: interrupted by user after %d/%d ROMs", i, len(roms))
 			break
 		}
-		setProgress(float64(i) / float64(len(roms)))
+		// ROM loop progress [0.5, 1.0].
+		setProgress(0.5 + float64(i)/float64(len(roms))*0.5)
 		setMessage(fmt.Sprintf("(%d/%d) %s", i+1, len(roms), rom.Display))
 
 		srcPath, found := MatchCheat(rom.Display, cheatList, regionPrio)

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	gaba "github.com/BrandonKowalski/gabagool/v2/pkg/gabagool"
 	"github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/constants"
@@ -129,6 +131,29 @@ func scrapeArtworkFlow() {
 	showScrapeSummary(summary)
 }
 
+// consoleMenuNames returns a display string for each console.
+// When two or more consoles share the same base display name the emulator tag
+// is appended in parentheses to disambiguate (e.g. "Game Boy Advance (MGBA)").
+// Unique names are shown without any tag suffix.
+func consoleMenuNames(consoles []ConsoleDir) []string {
+	count := make(map[string]int, len(consoles))
+	for _, c := range consoles {
+		count[c.Display]++
+	}
+	names := make([]string, len(consoles))
+	for i, c := range consoles {
+		if count[c.Display] > 1 {
+			names[i] = c.Display + " (" + c.Tag + ")"
+		} else {
+			names[i] = c.Display
+		}
+		if c.IsDisabled {
+			names[i] += " [disabled]"
+		}
+	}
+	return names
+}
+
 // pickConsoleForScraping shows only systems that have a ScreenScraper platform ID.
 func pickConsoleForScraping(settings AppSettings) (ConsoleDir, bool) {
 	consoles, err := scanConsoleDirs(settings.ShowHidden)
@@ -151,9 +176,10 @@ func pickConsoleForScraping(settings AppSettings) (ConsoleDir, bool) {
 		return ConsoleDir{}, false
 	}
 
+	names := consoleMenuNames(scrapable)
 	items := make([]gaba.MenuItem, len(scrapable))
-	for i, c := range scrapable {
-		items[i] = gaba.MenuItem{Text: c.Display}
+	for i, name := range names {
+		items[i] = gaba.MenuItem{Text: name}
 	}
 
 	opts := gaba.DefaultListOptions("Select System", items)
@@ -278,9 +304,10 @@ func pickConsoleForCheats(settings AppSettings) (ConsoleDir, bool) {
 		return ConsoleDir{}, false
 	}
 
+	names := consoleMenuNames(supported)
 	items := make([]gaba.MenuItem, len(supported))
-	for i, c := range supported {
-		items[i] = gaba.MenuItem{Text: c.Display}
+	for i, name := range names {
+		items[i] = gaba.MenuItem{Text: name}
 	}
 
 	opts := gaba.DefaultListOptions("Select System", items)
@@ -319,7 +346,6 @@ func showSettingsScreen() {
 	for {
 		settings := loadSettings()
 
-		// Show username with masked display
 		usernameDisplay := "<not set>"
 		if settings.SSUsername != "" {
 			usernameDisplay = settings.SSUsername
@@ -329,44 +355,130 @@ func showSettingsScreen() {
 			passwordDisplay = "<set>"
 		}
 
-		showHiddenDisplay := "Off"
+		showHiddenIdx := 0
 		if settings.ShowHidden {
-			showHiddenDisplay = "On"
+			showHiddenIdx = 1
 		}
 
-		items := []gaba.MenuItem{
-			{Text: fmt.Sprintf("Username: %s", usernameDisplay)},
-			{Text: fmt.Sprintf("Password: %s", passwordDisplay)},
-			{Text: "Artwork Options..."},
-			{Text: fmt.Sprintf("Include hidden/disabled: %s", showHiddenDisplay)},
+		// Item order: 0=Username, 1=Password, 2=Artwork Options, 3=Clear cheat cache, 4=Include hidden/disabled
+		items := []gaba.ItemWithOptions{
+			{
+				Item:           gaba.MenuItem{Text: "Username"},
+				Options:        []gaba.Option{{DisplayName: usernameDisplay, Value: "edit", Type: gaba.OptionTypeClickable}},
+				SelectedOption: 0,
+			},
+			{
+				Item:           gaba.MenuItem{Text: "Password"},
+				Options:        []gaba.Option{{DisplayName: passwordDisplay, Value: "edit", Type: gaba.OptionTypeClickable}},
+				SelectedOption: 0,
+			},
+			{
+				Item:           gaba.MenuItem{Text: "Artwork Options"},
+				Options:        []gaba.Option{{DisplayName: "...", Value: "edit", Type: gaba.OptionTypeClickable}},
+				SelectedOption: 0,
+			},
+			{
+				Item:           gaba.MenuItem{Text: "Clear cheat cache"},
+				Options:        []gaba.Option{{DisplayName: "...", Value: "clear", Type: gaba.OptionTypeClickable}},
+				SelectedOption: 0,
+			},
+			{
+				Item: gaba.MenuItem{Text: "Include hidden/disabled/empty ROMs"},
+				Options: []gaba.Option{
+					{DisplayName: "Off", Value: false},
+					{DisplayName: "On", Value: true},
+				},
+				SelectedOption: showHiddenIdx,
+			},
 		}
 
-		opts := gaba.DefaultListOptions("Settings", items)
-		opts.FooterHelpItems = []gaba.FooterHelpItem{
-			{ButtonName: "B", HelpText: "Back"},
-			{ButtonName: "A", HelpText: "Edit"},
+		listOpts := gaba.OptionListSettings{
+			ConfirmButton: constants.VirtualButtonStart,
+			FooterHelpItems: []gaba.FooterHelpItem{
+				{ButtonName: "B", HelpText: "Back"},
+				{ButtonName: "←/→", HelpText: "Change"},
+				{ButtonName: "A", HelpText: "Edit"},
+				{ButtonName: "START", HelpText: "Save"},
+			},
 		}
 
-		result, err := gaba.List(opts)
+		result, err := gaba.OptionsList("Settings", listOpts, items)
 		if isErrCancelled(err) {
 			return
 		}
-		if err != nil || len(result.Selected) == 0 {
+		if err != nil || result == nil {
 			return
 		}
 
-		switch result.Selected[0] {
-		case 0:
-			editUsername(&settings)
-		case 1:
-			editPassword(&settings)
-		case 2:
-			editArtworkOptions(&settings)
-		case 3:
-			settings.ShowHidden = !settings.ShowHidden
-			logError("saving settings", saveSettings(settings))
+		if result.Action == gaba.ListActionSelected {
+			switch result.Selected {
+			case 0:
+				editUsername(&settings)
+			case 1:
+				editPassword(&settings)
+			case 2:
+				editArtworkOptions(&settings)
+			case 3:
+				clearCheatCache()
+			}
+			continue
 		}
+
+		// START pressed: save ShowHidden and exit.
+		settings.ShowHidden, _ = result.Items[4].Options[result.Items[4].SelectedOption].Value.(bool)
+		log.Printf("ui: settings saved: showHidden=%v", settings.ShowHidden)
+		logError("saving settings", saveSettings(settings))
+		return
 	}
+}
+
+func clearCheatCache() {
+	confirmed, err := gaba.ConfirmationMessage(
+		"Clear the downloaded cheat database?\n\nThis deletes the local git checkout.\nIt will be re-downloaded on next use.",
+		[]gaba.FooterHelpItem{
+			{ButtonName: "B", HelpText: "Cancel"},
+			{ButtonName: "A", HelpText: "Clear", IsConfirmButton: true},
+		},
+		gaba.MessageOptions{ConfirmButton: constants.VirtualButtonA},
+	)
+	if err != nil || confirmed == nil || !confirmed.Confirmed {
+		return
+	}
+
+	repoPath := getCheatRepoPath()
+	var progress atomic.Float64
+
+	_, delErr := gaba.ProcessMessage("Clearing cheat cache...", gaba.ProcessMessageOptions{
+		ShowProgressBar: true,
+		Progress:        &progress,
+	}, func() (struct{}, error) {
+		// Collect all paths via a depth-first walk (root first, leaves last).
+		var paths []string
+		_ = filepath.Walk(repoPath, func(path string, _ os.FileInfo, err error) error {
+			if err == nil {
+				paths = append(paths, path)
+			}
+			return nil
+		})
+
+		total := len(paths)
+		if total == 0 {
+			return struct{}{}, nil
+		}
+
+		// Delete in reverse order so leaves are removed before their parents.
+		for i := len(paths) - 1; i >= 0; i-- {
+			_ = os.Remove(paths[i])
+			progress.Store(float64(len(paths)-i) / float64(total))
+		}
+		return struct{}{}, nil
+	})
+
+	if delErr != nil {
+		logError("clear cheat cache", delErr)
+		return
+	}
+	log.Printf("ui: cheat cache cleared")
 }
 
 func editUsername(settings *AppSettings) {

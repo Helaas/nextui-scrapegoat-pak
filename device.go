@@ -110,6 +110,10 @@ func scanConsoleDirs(showHidden bool) ([]ConsoleDir, error) {
 			if isHidden(name) {
 				continue
 			}
+			// Skip console dirs with no visible ROM content (empty or dotfiles only).
+			if !dirHasVisibleContent(fullPath) {
+				continue
+			}
 		} else {
 			// With showHidden: still exclude Mac dotfiles (dot-dirs without a TAG).
 			if isMacDotfile(name) || name == "map.txt" {
@@ -368,6 +372,21 @@ func isMacDotfile(name string) bool {
 		return false
 	}
 	return extractTag(name) == ""
+}
+
+// dirHasVisibleContent reports whether dir contains at least one non-hidden entry.
+// Used to skip empty or dot-file-only console folders when ShowHidden is off.
+func dirHasVisibleContent(path string) bool {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !isHidden(e.Name()) {
+			return true
+		}
+	}
+	return false
 }
 
 // ── String utilities ─────────────────────────────────────────
