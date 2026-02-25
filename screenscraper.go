@@ -421,41 +421,46 @@ func (c *SSClient) DownloadMedia(ctx context.Context, mediaURL, destPath string)
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	if !isJPEG {
-		f, err := os.Create(destPath)
+	// Write to a temp file first; rename to destPath only on success.
+	// This prevents a partial/corrupted file from being left at destPath
+	// if the download is interrupted mid-stream.
+	tmpPath := destPath + ".tmp"
+	writeErr := func() error {
+		f, err := os.Create(tmpPath)
 		if err != nil {
-			return fmt.Errorf("create file: %w", err)
+			return fmt.Errorf("create temp file: %w", err)
 		}
-		if _, err = io.Copy(f, resp.Body); err != nil {
-			f.Close()
-			return err
+
+		if !isJPEG {
+			if _, err = io.Copy(f, resp.Body); err != nil {
+				f.Close()
+				return err
+			}
+		} else {
+			img, err := jpeg.Decode(resp.Body)
+			if err != nil {
+				f.Close()
+				log.Printf("DownloadMedia: jpeg decode failed: %v", err)
+				return fmt.Errorf("jpeg decode: %w", err)
+			}
+			if err := png.Encode(f, img); err != nil {
+				f.Close()
+				return err
+			}
 		}
+
 		if err := f.Sync(); err != nil {
 			f.Close()
 			return err
 		}
 		return f.Close()
-	}
+	}()
 
-	// Decode JPEG and re-encode as PNG.
-	img, err := jpeg.Decode(resp.Body)
-	if err != nil {
-		log.Printf("DownloadMedia: jpeg decode failed: %v", err)
-		return fmt.Errorf("jpeg decode: %w", err)
+	if writeErr != nil {
+		os.Remove(tmpPath)
+		return writeErr
 	}
-	f, err := os.Create(destPath)
-	if err != nil {
-		return fmt.Errorf("create file: %w", err)
-	}
-	if err := png.Encode(f, img); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return os.Rename(tmpPath, destPath)
 }
 
 // ── Quota ────────────────────────────────────────────────────
