@@ -1,0 +1,106 @@
+--- a/vendor/github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/process_message.go
++++ b/vendor/github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/process_message.go
+@@ -26,15 +26,23 @@
+ 	ShowThemeBackground bool
+ 	ShowProgressBar     bool
+ 	Progress            *atomic.Float64
++	DynamicMessage      *atomic.String          // If set, the displayed message is read from this on each render tick
+ 	ProcessInput        bool                    // If true, process input events (enables chord/sequence detection)
+ 	CancelButton        constants.VirtualButton // If set, pressing this button exits with ErrCancelled
+-	FooterHelpItems     []FooterHelpItem        // Button hints shown in footer
++	InterruptButton     constants.VirtualButton // If set, pressing this button stores 1 into InterruptSignal (graceful stop)
++	InterruptSignal     *atomic.Int32           // Written to when InterruptButton is pressed; caller polls this
++	// MessageLines is the number of text lines the DynamicMessage will occupy.
++	// Used to position the progress bar when ShowProgressBar is true.
++	// Defaults to 2 when unset.
++	MessageLines    int
++	FooterHelpItems []FooterHelpItem // Button hints shown in footer
+ }
+ 
+ type processMessage struct {
+ 	window          *internal.Window
+ 	showBG          bool
+ 	message         string
++	dynamicMessage  *atomic.String
+ 	isProcessing    bool
+ 	completeTime    time.Time
+ 	imageTexture    *sdl.Texture
+@@ -43,6 +51,7 @@
+ 	showProgressBar bool
+ 	progress        *atomic.Float64
+ 	footerHelpItems []FooterHelpItem
++	messageLines    int32
+ }
+ 
+ // ProcessMessage displays a message while executing a function asynchronously.
+@@ -51,16 +60,23 @@
+ // Supports displaying images in PNG, JPEG, and SVG formats via ImageBytes or Image (legacy).
+ // For SVG images, ImageWidth and ImageHeight should be specified for optimal rendering quality.
+ func ProcessMessage[T any](message string, options ProcessMessageOptions, fn func() (T, error)) (T, error) {
++	lines := int32(options.MessageLines)
++	if lines < 2 {
++		lines = 2
++	}
++
+ 	processor := &processMessage{
+ 		window:          internal.GetWindow(),
+ 		showBG:          options.ShowThemeBackground,
+ 		imageWidth:      options.ImageWidth,
+ 		imageHeight:     options.ImageHeight,
+ 		message:         message,
++		dynamicMessage:  options.DynamicMessage,
+ 		isProcessing:    true,
+ 		showProgressBar: options.ShowProgressBar,
+ 		progress:        options.Progress,
+ 		footerHelpItems: options.FooterHelpItems,
++		messageLines:    lines,
+ 	}
+ 
+ 	// Load image from bytes (preferred) or from file path (legacy)
+@@ -133,6 +149,14 @@
+ 						running = false
+ 					}
+ 				}
++				// Check if interrupt button was pressed (graceful stop — signals caller, keeps running)
++				if options.InterruptButton != constants.VirtualButtonUnassigned && inputEvent != nil && inputEvent.Pressed {
++					if inputEvent.Button == options.InterruptButton {
++						if options.InterruptSignal != nil {
++							options.InterruptSignal.Store(1)
++						}
++					}
++				}
+ 			}
+ 		}
+ 
+@@ -208,15 +232,20 @@
+ 
+ 	maxWidth := p.window.GetWidth() * 3 / 4
+ 
++	displayMsg := p.message
++	if p.dynamicMessage != nil {
++		displayMsg = p.dynamicMessage.Load()
++	}
++
+ 	messageY := p.window.GetHeight() / 2
+ 	spacing := int32(5)
+ 	if p.showProgressBar {
+ 		barHeight := int32(40)
+-		totalHeight := (int32(font.Height()) * 2) + spacing + barHeight
++		totalHeight := (int32(font.Height()) * p.messageLines) + spacing + barHeight
+ 		messageY = (p.window.GetHeight() - totalHeight) / 2
+ 	}
+ 
+-	internal.RenderMultilineText(renderer, p.message, font, maxWidth, p.window.GetWidth()/2, messageY, sdl.Color{R: 255, G: 255, B: 255, A: 255})
++	internal.RenderMultilineText(renderer, displayMsg, font, maxWidth, p.window.GetWidth()/2, messageY, sdl.Color{R: 255, G: 255, B: 255, A: 255})
+ 
+ 	if p.showProgressBar {
+ 		p.renderProgressBar(renderer, messageY, spacing)
+@@ -237,7 +266,7 @@
+ 	barHeight := int32(40)
+ 	barX := (windowWidth - barWidth) / 2
+ 	// Position progress bar relative to the message with consistent spacing
+-	barY := messageY + int32(internal.Fonts.SmallFont.Height()) + spacing
++	barY := messageY + int32(internal.Fonts.SmallFont.Height())*(p.messageLines-1) + spacing
+ 
+ 	progressBarBg := sdl.Rect{
+ 		X: barX,

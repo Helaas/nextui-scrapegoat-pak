@@ -4,7 +4,7 @@ go 1.25.7
 
 require (
 	github.com/BrandonKowalski/certifiable v1.3.0
-	github.com/BrandonKowalski/gabagool/v2 v2.9.3
+	github.com/BrandonKowalski/gabagool/v2 v2.9.6
 	go.uber.org/atomic v1.11.0
 )
 

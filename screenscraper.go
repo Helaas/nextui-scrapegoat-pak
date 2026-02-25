@@ -29,8 +29,8 @@ import (
 
 const (
 	ssAPIBase   = "https://api.screenscraper.fr/api2"
-	ssSoftName  = "ScrapeGoat-v1.0.0"
-	ssUserAgent = "ScrapeGoat/1.0.0"
+	ssSoftName  = "ScrapeGoat-v1.0.1"
+	ssUserAgent = "ScrapeGoat/1.0.1"
 )
 
 // Build-time variables injected via -ldflags from .env.local.
@@ -421,41 +421,46 @@ func (c *SSClient) DownloadMedia(ctx context.Context, mediaURL, destPath string)
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
-	if !isJPEG {
-		f, err := os.Create(destPath)
+	// Write to a temp file first; rename to destPath only on success.
+	// This prevents a partial/corrupted file from being left at destPath
+	// if the download is interrupted mid-stream.
+	tmpPath := destPath + ".tmp"
+	writeErr := func() error {
+		f, err := os.Create(tmpPath)
 		if err != nil {
-			return fmt.Errorf("create file: %w", err)
+			return fmt.Errorf("create temp file: %w", err)
 		}
-		if _, err = io.Copy(f, resp.Body); err != nil {
-			f.Close()
-			return err
+
+		if !isJPEG {
+			if _, err = io.Copy(f, resp.Body); err != nil {
+				f.Close()
+				return err
+			}
+		} else {
+			img, err := jpeg.Decode(resp.Body)
+			if err != nil {
+				f.Close()
+				log.Printf("DownloadMedia: jpeg decode failed: %v", err)
+				return fmt.Errorf("jpeg decode: %w", err)
+			}
+			if err := png.Encode(f, img); err != nil {
+				f.Close()
+				return err
+			}
 		}
+
 		if err := f.Sync(); err != nil {
 			f.Close()
 			return err
 		}
 		return f.Close()
-	}
+	}()
 
-	// Decode JPEG and re-encode as PNG.
-	img, err := jpeg.Decode(resp.Body)
-	if err != nil {
-		log.Printf("DownloadMedia: jpeg decode failed: %v", err)
-		return fmt.Errorf("jpeg decode: %w", err)
+	if writeErr != nil {
+		os.Remove(tmpPath)
+		return writeErr
 	}
-	f, err := os.Create(destPath)
-	if err != nil {
-		return fmt.Errorf("create file: %w", err)
-	}
-	if err := png.Encode(f, img); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return os.Rename(tmpPath, destPath)
 }
 
 // ── Quota ────────────────────────────────────────────────────
@@ -525,9 +530,6 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, i
 		return ScrapeSummary{}, fmt.Errorf("scan roms: %w", err)
 	}
 
-	// Strip .disabled suffix so artwork is always saved under the non-disabled path.
-	consoleBaseName := strings.TrimSuffix(console.Name, ".disabled")
-
 	systemID, ok := SSPlatformIDs[console.Tag]
 	if !ok {
 		return ScrapeSummary{}, fmt.Errorf("no ScreenScraper ID for system %s", console.Tag)
@@ -537,7 +539,7 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, i
 	var toScrape []ROMFile
 	var preExisting int
 	for _, rom := range roms {
-		if missingOnly && artworkExists(consoleBaseName, rom.Display) {
+		if missingOnly && artworkExists(rom.Path, rom.Display) {
 			log.Printf("scrapeConsole: skip %s (artwork exists)", rom.Display)
 			preExisting++
 			continue
@@ -753,7 +755,7 @@ func scrapeOneROM(ctx context.Context, client *SSClient, rom ROMFile, console Co
 		return nil
 	}
 
-	destPath := artworkSrcPath(strings.TrimSuffix(console.Name, ".disabled"), rom.Display)
+	destPath := artworkSrcPath(rom.Path, rom.Display)
 	if err := client.DownloadMedia(ctx, result.MediaURL, destPath); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil // intentional stop
