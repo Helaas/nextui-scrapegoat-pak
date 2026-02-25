@@ -29,8 +29,8 @@ import (
 
 const (
 	ssAPIBase   = "https://api.screenscraper.fr/api2"
-	ssSoftName  = "ScrapeGoat-v1.0.0"
-	ssUserAgent = "ScrapeGoat/1.0.0"
+	ssSoftName  = "ScrapeGoat-v1.0.1"
+	ssUserAgent = "ScrapeGoat/1.0.1"
 )
 
 // Build-time variables injected via -ldflags from .env.local.
