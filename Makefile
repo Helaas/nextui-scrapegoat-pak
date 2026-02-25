@@ -217,33 +217,13 @@ clean-go-sdk:
 	rm -rf $(GO_SDK_CACHE)
 
 # ── Vendor patches ────────────────────────────────────────────
-# Gabagool hardcodes /dev/input/event1 for the power button.
-# TG5050 uses /dev/input/event2. This target applies the fix.
+# Applies patches to vendored dependencies that are not yet released upstream.
+# Idempotent: each block checks whether the patch is already applied before running.
 
-GABAGOOL_INIT := vendor/github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/init.go
-GABAGOOL_NEXTVAL := vendor/github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/platform/nextui/theming.go
 GABAGOOL_PROCESS_MSG := vendor/github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/process_message.go
 CERTIFIABLE := vendor/github.com/BrandonKowalski/certifiable/certifiable.go
 
 patch-vendor:
-	@if [ -f "$(GABAGOOL_INIT)" ] && grep -q 'DevicePath:.*"/dev/input/event1"' "$(GABAGOOL_INIT)"; then \
-		echo "Patching Gabagool power button for TG5050 support..."; \
-		cp patches/gabagool-power-button-tg5050.patch /tmp/_gaba_patch.patch; \
-		cd "$(CURDIR)" && git apply --whitespace=nowarn patches/gabagool-power-button-tg5050.patch 2>/dev/null || \
-			patch -p1 < patches/gabagool-power-button-tg5050.patch; \
-		echo "Patch applied."; \
-	else \
-		echo "Gabagool power button patch already applied (or vendor not present)."; \
-	fi
-	@if [ -f "$(GABAGOOL_NEXTVAL)" ] && ! grep -q 'platformEnv := strings.ToLower' "$(GABAGOOL_NEXTVAL)"; then \
-		echo "Patching Gabagool nextval path for TG5050 support..."; \
-		cp patches/gabagool-nextval-path-tg5050.patch /tmp/_gaba_nextval_patch.patch; \
-		cd "$(CURDIR)" && git apply --whitespace=nowarn patches/gabagool-nextval-path-tg5050.patch 2>/dev/null || \
-			patch -p1 < patches/gabagool-nextval-path-tg5050.patch; \
-		echo "Patch applied."; \
-	else \
-		echo "Gabagool nextval path patch already applied (or vendor not present)."; \
-	fi
 	@if [ -f "$(CERTIFIABLE)" ] && ! grep -q 'func CACerts' "$(CERTIFIABLE)"; then \
 		echo "Patching certifiable to export CA certs..."; \
 		cd "$(CURDIR)" && git apply --whitespace=nowarn patches/certifiable-export-cacerts.patch 2>/dev/null || \
@@ -252,13 +232,13 @@ patch-vendor:
 	else \
 		echo "Certifiable CACerts patch already applied (or vendor not present)."; \
 	fi
-	@if [ -f "$(GABAGOOL_PROCESS_MSG)" ] && ! grep -q 'MessageLines' "$(GABAGOOL_PROCESS_MSG)"; then \
-		echo "Patching Gabagool ProcessMessage for configurable line count..."; \
-		cd "$(CURDIR)" && git apply --whitespace=nowarn patches/gabagool-message-lines.patch 2>/dev/null || \
-			patch -p1 < patches/gabagool-message-lines.patch; \
+	@if [ -f "$(GABAGOOL_PROCESS_MSG)" ] && ! grep -q 'InterruptButton' "$(GABAGOOL_PROCESS_MSG)"; then \
+		echo "Patching Gabagool ProcessMessage (DynamicMessage, InterruptButton, MessageLines)..."; \
+		cd "$(CURDIR)" && git apply --whitespace=nowarn patches/gabagool-process-message.patch 2>/dev/null || \
+			patch -p1 < patches/gabagool-process-message.patch; \
 		echo "Patch applied."; \
 	else \
-		echo "Gabagool MessageLines patch already applied (or vendor not present)."; \
+		echo "Gabagool ProcessMessage patch already applied (or vendor not present)."; \
 	fi
 
 # ── Dependency management ────────────────────────────────────
@@ -338,7 +318,7 @@ help:
 	@echo "  tg5050        Build for TG5050 (Docker ARM64)"
 	@echo "  embedded      Build all embedded platforms"
 	@echo "  deps          Update Go dependencies + apply patches"
-	@echo "  patch-vendor  Apply vendor patches (TG5050 power button)"
+	@echo "  patch-vendor  Apply vendor patches (certifiable CACerts, gabagool ProcessMessage)"
 	@echo "  package       Package both platforms (.pak.zip)"
 	@echo "  export-trimui Create .pakz for TrimUI Tools"
 	@echo "  build-sdl2-gfx    Cross-compile static SDL2_gfx (cached in .cache/sdl2-gfx/)"

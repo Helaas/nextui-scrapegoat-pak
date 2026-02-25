@@ -2,6 +2,8 @@ github.com/BrandonKowalski/certifiable v1.3.0 h1:o4VbMMVqBQ8kYFqUFD7J3P6tJg9dVKW
 github.com/BrandonKowalski/certifiable v1.3.0/go.mod h1:fnYhDBTxp3ZeTYFkWDXSAo5m8ytUwGG/3dZHSzDH9UU=
 github.com/BrandonKowalski/gabagool/v2 v2.9.3 h1:bQBsvGCRD0aFEjjI4EQhC0r6/T/fXjGCgMQqc9JE384=
 github.com/BrandonKowalski/gabagool/v2 v2.9.3/go.mod h1:Iq/YFTz7+w8O78IE21kOkHbg3a4ZD2mjcd0S/jVhI94=
+github.com/BrandonKowalski/gabagool/v2 v2.9.6 h1:6+5Aio2TvMxAfm9uXkDYsGpmMg3KF2V+UjqNG2nhZ8Y=
+github.com/BrandonKowalski/gabagool/v2 v2.9.6/go.mod h1:Iq/YFTz7+w8O78IE21kOkHbg3a4ZD2mjcd0S/jVhI94=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/holoplot/go-evdev v0.0.0-20250804134636-ab1d56a1fe83 h1:B+A58zGFuDrvEZpPN+yS6swJA0nzqgZvDzgl/OPyefU=
