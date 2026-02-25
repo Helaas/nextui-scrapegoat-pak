@@ -198,6 +198,12 @@ func scanROMs(consoleDir string, showHidden bool) ([]ROMFile, error) {
 					IsCueFolder: true,
 					IsDisabled:  isDisabled,
 				})
+			} else {
+				// Plain subfolder — recurse into it.
+				sub, err := scanROMs(dirPath, showHidden)
+				if err == nil {
+					roms = append(roms, sub...)
+				}
 			}
 			continue
 		}
@@ -219,16 +225,19 @@ func scanROMs(consoleDir string, showHidden bool) ([]ROMFile, error) {
 // ── Artwork helpers ──────────────────────────────────────────
 
 // artworkExists reports whether source artwork already exists for a ROM.
-// Path: Roms/<consoleDirName>/.media/<displayName>.png
-func artworkExists(consoleDirName, displayName string) bool {
-	path := filepath.Join(getROMsPath(), consoleDirName, ".media", displayName+".png")
+// It places artwork in a .media folder co-located with the ROM, so a ROM
+// in a subfolder gets its artwork in that subfolder's .media directory.
+// Path: <dir(romPath)>/.media/<displayName>.png
+func artworkExists(romPath, displayName string) bool {
+	path := filepath.Join(filepath.Dir(romPath), ".media", displayName+".png")
 	_, err := os.Stat(path)
 	return err == nil
 }
 
 // artworkSrcPath returns the expected source artwork path for a ROM.
-func artworkSrcPath(consoleDirName, displayName string) string {
-	return filepath.Join(getROMsPath(), consoleDirName, ".media", displayName+".png")
+// The artwork is placed in a .media folder co-located with the ROM.
+func artworkSrcPath(romPath, displayName string) string {
+	return filepath.Join(filepath.Dir(romPath), ".media", displayName+".png")
 }
 
 // ── MD5 hashing ──────────────────────────────────────────────

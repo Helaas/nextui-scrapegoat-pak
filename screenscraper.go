@@ -530,9 +530,6 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, i
 		return ScrapeSummary{}, fmt.Errorf("scan roms: %w", err)
 	}
 
-	// Strip .disabled suffix so artwork is always saved under the non-disabled path.
-	consoleBaseName := strings.TrimSuffix(console.Name, ".disabled")
-
 	systemID, ok := SSPlatformIDs[console.Tag]
 	if !ok {
 		return ScrapeSummary{}, fmt.Errorf("no ScreenScraper ID for system %s", console.Tag)
@@ -542,7 +539,7 @@ func scrapeConsole(console ConsoleDir, missingOnly bool, settings AppSettings, i
 	var toScrape []ROMFile
 	var preExisting int
 	for _, rom := range roms {
-		if missingOnly && artworkExists(consoleBaseName, rom.Display) {
+		if missingOnly && artworkExists(rom.Path, rom.Display) {
 			log.Printf("scrapeConsole: skip %s (artwork exists)", rom.Display)
 			preExisting++
 			continue
@@ -758,7 +755,7 @@ func scrapeOneROM(ctx context.Context, client *SSClient, rom ROMFile, console Co
 		return nil
 	}
 
-	destPath := artworkSrcPath(strings.TrimSuffix(console.Name, ".disabled"), rom.Display)
+	destPath := artworkSrcPath(rom.Path, rom.Display)
 	if err := client.DownloadMedia(ctx, result.MediaURL, destPath); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil // intentional stop
