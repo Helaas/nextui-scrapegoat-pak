@@ -21,7 +21,7 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 - Live progress tracking with thread count, ETA, and API quota display
 - Configurable artwork priority (20 media types available including covers, wheels, fan art, and more)
 - Configurable region priority (USA, Europe, Japan, France, Germany, Spain, Italy, Portugal, World, and more)
-- Supports 46 systems via ScreenScraper (33 bundled + 13 community paks)
+- Supports 46 systems via ScreenScraper (33 bundled + 13 community paks, plus `P8` alias support for PICO-8 folders)
 - Supports 32 systems for cheat downloading via Libretro
 - Shows detailed scraping summary (Total / Found / Not Found / Errors)
 - Fully supports multi-disc games, CUE/BIN disc images, and zip-archived ROMs
@@ -60,7 +60,7 @@ Supported systems for artwork (46 total):
 - **Sony:** PlayStation, PlayStation Portable
 - **Atari:** 2600, 5200, 7800, Lynx, Jaguar, Atari 800
 - **NEC:** PC Engine/TurboGrafx, PC Engine SuperGrafx
-- **Other:** Neo Geo Pocket, Neo Geo Pocket Color, Commodore 64, Commodore 128, Amstrad CPC, MSX, Amiga, ColecoVision, SG-1000, Arcade (FBNeo), Pokémon Mini, VIC-20, Intellivision, 3DO, PICO-8, TIC-80, RPG Maker 2000/2003, ScummVM
+- **Other:** Neo Geo Pocket, Neo Geo Pocket Color, Commodore 64, Commodore 128, Amstrad CPC, MSX, Amiga, ColecoVision, SG-1000, Arcade (FBNeo), Pokémon Mini, VIC-20, Intellivision, 3DO, PICO-8 (`PICO` and legacy `P8` tags), TIC-80, RPG Maker 2000/2003, ScummVM
 
 ### Download Cheats
 
@@ -70,8 +70,8 @@ Supported systems for artwork (46 total):
 
 The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name. When multiple cheat files exist for the same game (e.g. different regions), ScrapeGoat picks the one that best matches your ROM's region and your configured region priority. See [How Matching Works](#how-matching-works) for details.
 
-Supported systems for cheats (32 total):
-Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, SNES/SFC, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600/5200/7800, Lynx, ColecoVision, MSX, SG-1000, Nintendo 64, Nintendo DS, PlayStation Portable, Dreamcast, 3DO, Atari Jaguar, PC Engine SuperGrafx, Intellivision, Atari 800
+Supported systems for cheats (32 total, based on current Libretro `cht/` directories):
+Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA), SNES/SFC, Super Famicom (Supafaust), Super Game Boy, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, Sega 32X, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600, Atari 5200, Atari 7800, Lynx, ColecoVision, MSX, Nintendo 64, Nintendo DS, PlayStation Portable, Dreamcast, Atari Jaguar, PC Engine SuperGrafx, Intellivision, Atari 800, TIC-80
 
 ### Settings
 
