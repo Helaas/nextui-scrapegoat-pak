@@ -3,16 +3,27 @@
 
 #include <ctype.h>
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/* Suppress GCC warnings about snprintf truncation when combining
+   PATH_MAX-sized strings — truncation is safe by design. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
 
 /* ── Git binary resolution ────────────────────────────────── */
 
@@ -23,7 +34,7 @@ const char *get_git_bin(void) {
         return "/usr/bin/git";
     return "git";
 #else
-    static char buf[PATH_MAX];
+    static _Thread_local char buf[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (len <= 0)
         return "git";
@@ -93,8 +104,8 @@ static char **build_git_env(void) {
         env[idx++] = environ[i];
 
 #ifndef PLATFORM_MAC
-    static char ld_path[PATH_MAX];
-    static char exec_path[PATH_MAX];
+    static _Thread_local char ld_path[PATH_MAX];
+    static _Thread_local char exec_path[PATH_MAX];
     static char template_dir[] = "GIT_TEMPLATE_DIR=";
 
     char exe_dir[PATH_MAX];
@@ -121,18 +132,16 @@ static char **build_git_env(void) {
 
 /* ── Git process execution with streaming ─────────────────── */
 
-static void remove_git_locks(void) {
+static pthread_mutex_t g_repo_lock_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+    int fd;
+} cheat_repo_lock;
+
+static void get_repo_lock_path(char *buf, size_t buflen) {
     char repo[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
-
-    char lock_paths[2][PATH_MAX];
-    snprintf(lock_paths[0], sizeof(lock_paths[0]), "%s/.git/index.lock", repo);
-    snprintf(lock_paths[1], sizeof(lock_paths[1]), "%s/.git/info/sparse-checkout.lock", repo);
-
-    for (int i = 0; i < 2; i++) {
-        if (unlink(lock_paths[i]) == 0)
-            fprintf(stderr, "cheats: removed stale lock: %s\n", lock_paths[i]);
-    }
+    snprintf(buf, buflen, "%s.lock", repo);
 }
 
 static float parse_git_progress(const char *line) {
@@ -151,12 +160,10 @@ static float parse_git_progress(const char *line) {
 }
 
 static int run_git_streaming(const char **argv, const char *cwd,
-                             int *interrupt_signal,
+                             atomic_int *interrupt_signal,
                              cheat_progress_fn set_progress,
                              float progress_scale,
                              float progress_offset) {
-    remove_git_locks();
-
     fprintf(stderr, "cheats: exec");
     for (const char **arg = argv; *arg; arg++)
         fprintf(stderr, " %s", *arg);
@@ -164,13 +171,13 @@ static int run_git_streaming(const char **argv, const char *cwd,
 
     int pipe_fd[2];
     if (pipe(pipe_fd) != 0)
-        return -1;
+        return CHEAT_OP_ERROR;
 
     pid_t pid = fork();
     if (pid < 0) {
         close(pipe_fd[0]);
         close(pipe_fd[1]);
-        return -1;
+        return CHEAT_OP_ERROR;
     }
 
     if (pid == 0) {
@@ -196,7 +203,7 @@ static int run_git_streaming(const char **argv, const char *cwd,
     int killed = 0;
 
     while (1) {
-        if (interrupt_signal && *interrupt_signal != 0 && !killed) {
+        if (interrupt_signal && atomic_load(interrupt_signal) != 0 && !killed) {
             kill(pid, SIGKILL);
             killed = 1;
         }
@@ -236,10 +243,10 @@ static int run_git_streaming(const char **argv, const char *cwd,
     waitpid(pid, &status, 0);
 
     if (killed)
-        return -2;
+        return CHEAT_OP_CANCELLED;
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
-        return 0;
-    return -1;
+        return CHEAT_OP_OK;
+    return CHEAT_OP_ERROR;
 }
 
 /* ── Sparse checkout management ───────────────────────────── */
@@ -262,7 +269,62 @@ static void ensure_parent_dir(const char *path) {
     mkdir(parent, 0755);
 }
 
-static int is_repo_initialized(void) {
+static int acquire_repo_lock(cheat_repo_lock *lock) {
+    char lock_path[PATH_MAX];
+
+    lock->fd = -1;
+    if (pthread_mutex_trylock(&g_repo_lock_mutex) != 0)
+        return CHEAT_OP_BUSY;
+
+    get_repo_lock_path(lock_path, sizeof(lock_path));
+    ensure_parent_dir(lock_path);
+
+    lock->fd = open(lock_path, O_CREAT | O_RDWR, 0644);
+    if (lock->fd < 0) {
+        pthread_mutex_unlock(&g_repo_lock_mutex);
+        return CHEAT_OP_ERROR;
+    }
+
+    if (flock(lock->fd, LOCK_EX | LOCK_NB) != 0) {
+        int err = errno;
+        close(lock->fd);
+        lock->fd = -1;
+        pthread_mutex_unlock(&g_repo_lock_mutex);
+        if (err == EWOULDBLOCK || err == EAGAIN)
+            return CHEAT_OP_BUSY;
+        return CHEAT_OP_ERROR;
+    }
+
+    return CHEAT_OP_OK;
+}
+
+static void release_repo_lock(cheat_repo_lock *lock) {
+    if (!lock || lock->fd < 0)
+        return;
+
+    flock(lock->fd, LOCK_UN);
+    close(lock->fd);
+    lock->fd = -1;
+    pthread_mutex_unlock(&g_repo_lock_mutex);
+}
+
+static int run_repo_git_streaming(const char **argv, const char *cwd,
+                                  atomic_int *interrupt_signal,
+                                  cheat_progress_fn set_progress,
+                                  float progress_scale,
+                                  float progress_offset) {
+    cheat_repo_lock lock;
+    int ret = acquire_repo_lock(&lock);
+    if (ret != CHEAT_OP_OK)
+        return ret;
+
+    ret = run_git_streaming(argv, cwd, interrupt_signal,
+                            set_progress, progress_scale, progress_offset);
+    release_repo_lock(&lock);
+    return ret;
+}
+
+int is_repo_initialized(void) {
     char repo[PATH_MAX];
     char git_dir[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
@@ -272,11 +334,11 @@ static int is_repo_initialized(void) {
     return stat(git_dir, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-static int init_cheat_repo(int *interrupt_signal,
-                           cheat_message_fn set_message,
-                           cheat_progress_fn set_progress,
-                           float progress_scale,
-                           float progress_offset) {
+int init_cheat_repo(atomic_int *interrupt_signal,
+                    cheat_message_fn set_message,
+                    cheat_progress_fn set_progress,
+                    float progress_scale,
+                    float progress_offset) {
     char repo[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
     ensure_parent_dir(repo);
@@ -302,16 +364,16 @@ static int init_cheat_repo(int *interrupt_signal,
         NULL,
     };
 
-    return run_git_streaming(argv, NULL, interrupt_signal,
-                             set_progress, progress_scale, progress_offset);
+    return run_repo_git_streaming(argv, NULL, interrupt_signal,
+                                  set_progress, progress_scale, progress_offset);
 }
 
-static int ensure_system_checked_out(const char *libretro_dir_name,
-                                     int *interrupt_signal,
-                                     cheat_message_fn set_message,
-                                     cheat_progress_fn set_progress,
-                                     float progress_scale,
-                                     float progress_offset) {
+int ensure_system_checked_out(const char *libretro_dir_name,
+                              atomic_int *interrupt_signal,
+                              cheat_message_fn set_message,
+                              cheat_progress_fn set_progress,
+                              float progress_scale,
+                              float progress_offset) {
     char repo[PATH_MAX];
     char local_dir[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
@@ -336,15 +398,15 @@ static int ensure_system_checked_out(const char *libretro_dir_name,
         NULL,
     };
 
-    return run_git_streaming(argv, NULL, interrupt_signal,
-                             set_progress, progress_scale, progress_offset);
+    return run_repo_git_streaming(argv, NULL, interrupt_signal,
+                                  set_progress, progress_scale, progress_offset);
 }
 
-static int update_cheat_repo(int *interrupt_signal,
-                             cheat_message_fn set_message,
-                             cheat_progress_fn set_progress,
-                             float progress_scale,
-                             float progress_offset) {
+int update_cheat_repo(atomic_int *interrupt_signal,
+                      cheat_message_fn set_message,
+                      cheat_progress_fn set_progress,
+                      float progress_scale,
+                      float progress_offset) {
     char repo[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
 
@@ -358,8 +420,8 @@ static int update_cheat_repo(int *interrupt_signal,
         NULL,
     };
 
-    return run_git_streaming(argv, NULL, interrupt_signal,
-                             set_progress, progress_scale, progress_offset);
+    return run_repo_git_streaming(argv, NULL, interrupt_signal,
+                                  set_progress, progress_scale, progress_offset);
 }
 
 /* ── Cheat name normalization and matching ────────────────── */
@@ -540,24 +602,7 @@ static int score_cheat_region(const char **cheat_regions, int cheat_count,
 
 /* ── Cheat list building and matching ─────────────────────── */
 
-typedef struct {
-    char path[PATH_MAX];
-    const char *regions[16];
-    int region_count;
-} cheat_candidate;
-
-typedef struct {
-    char normalized[256];
-    cheat_candidate *candidates;
-    int candidate_count;
-    int candidate_cap;
-} cheat_entry;
-
-typedef struct {
-    cheat_entry *entries;
-    int count;
-    int cap;
-} cheat_list;
+/* Types are defined in cheats.h */
 
 static cheat_entry *cheat_list_find(cheat_list *list, const char *normalized) {
     for (int i = 0; i < list->count; i++) {
@@ -567,7 +612,7 @@ static cheat_entry *cheat_list_find(cheat_list *list, const char *normalized) {
     return NULL;
 }
 
-static void cheat_list_add(cheat_list *list, const char *normalized,
+static void cheat_list_add_internal(cheat_list *list, const char *normalized,
                            const char *path, const char **regions, int region_count) {
     cheat_entry *entry = cheat_list_find(list, normalized);
     if (!entry) {
@@ -604,7 +649,7 @@ static void cheat_list_add(cheat_list *list, const char *normalized,
         candidate->regions[i] = regions[i];
 }
 
-static void cheat_list_free(cheat_list *list) {
+void cheat_list_free(cheat_list *list) {
     if (!list)
         return;
     for (int i = 0; i < list->count; i++)
@@ -615,7 +660,7 @@ static void cheat_list_free(cheat_list *list) {
     list->cap = 0;
 }
 
-static int build_cheat_list(const char *libretro_dir_name, cheat_list *list) {
+int build_cheat_list(const char *libretro_dir_name, cheat_list *list) {
     char repo[PATH_MAX];
     char cheat_dir[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
@@ -647,7 +692,7 @@ static int build_cheat_list(const char *libretro_dir_name, cheat_list *list) {
 
         const char *regions[16];
         int region_count = extract_cheat_regions(game_name, regions, 16);
-        cheat_list_add(list, normalized, full_path, regions, region_count);
+        cheat_list_add_internal(list, normalized, full_path, regions, region_count);
     }
 
     closedir(dir);
@@ -655,7 +700,7 @@ static int build_cheat_list(const char *libretro_dir_name, cheat_list *list) {
     return 0;
 }
 
-static const char *match_cheat(const char *rom_display, cheat_list *list,
+const char *match_cheat(const char *rom_display, cheat_list *list,
                                char **region_prio, int region_count) {
     char normalized[256];
     normalize_cheat_name(rom_display, normalized, sizeof(normalized));
@@ -688,7 +733,7 @@ static const char *match_cheat(const char *rom_display, cheat_list *list,
 
 /* ── File copy helper ─────────────────────────────────────── */
 
-static int copy_file(const char *src, const char *dst) {
+int copy_cheat_file(const char *src, const char *dst) {
     ensure_parent_dir(dst);
 
     char tmp_path[PATH_MAX];
@@ -734,11 +779,24 @@ static int copy_file(const char *src, const char *dst) {
     return 0;
 }
 
+/* ── Cheat existence check ───────────────────────────────── */
+
+bool cheat_exists(const char *system_tag, const char *rom_display) {
+    char cheats_base[PATH_MAX];
+    char cheat_file[PATH_MAX];
+    get_cheats_path(cheats_base, sizeof(cheats_base));
+    snprintf(cheat_file, sizeof(cheat_file), "%s/%s/%s.cht",
+             cheats_base, system_tag, rom_display);
+
+    struct stat st;
+    return stat(cheat_file, &st) == 0;
+}
+
 /* ── Console cheat downloader ─────────────────────────────── */
 
 run_result download_cheats_for_console(const console_dir *console,
                                        char **region_prio, int region_count,
-                                       int *interrupt_signal,
+                                       atomic_int *interrupt_signal,
                                        cheat_progress_fn set_progress,
                                        cheat_message_fn set_message) {
     scrape_summary summary = {0};
@@ -757,21 +815,31 @@ run_result download_cheats_for_console(const console_dir *console,
 
     if (!is_repo_initialized()) {
         int init_result = init_cheat_repo(interrupt_signal, set_message, set_progress, 0.3f, 0.0f);
-        if (init_result == -2) {
+        if (init_result == CHEAT_OP_CANCELLED) {
             cancelled = true;
             goto cleanup;
         }
-        if (init_result != 0) {
+        if (init_result == CHEAT_OP_BUSY) {
+            result = make_run_error(summary,
+                                    "Cheat database is busy. Please wait for the current operation to finish.");
+            goto cleanup;
+        }
+        if (init_result != CHEAT_OP_OK) {
             result = make_run_error(summary, "Failed to clone the cheat database.");
             goto cleanup;
         }
     } else {
         int update_result = update_cheat_repo(interrupt_signal, set_message, set_progress, 0.3f, 0.0f);
-        if (update_result == -2) {
+        if (update_result == CHEAT_OP_CANCELLED) {
             cancelled = true;
             goto cleanup;
         }
-        if (update_result != 0) {
+        if (update_result == CHEAT_OP_BUSY) {
+            result = make_run_error(summary,
+                                    "Cheat database is busy. Please wait for the current operation to finish.");
+            goto cleanup;
+        }
+        if (update_result != CHEAT_OP_OK) {
             fprintf(stderr, "cheats: pull failed (using existing data)\n");
         }
     }
@@ -782,11 +850,16 @@ run_result download_cheats_for_console(const console_dir *console,
     {
         int checkout_result = ensure_system_checked_out(libretro_dir_name, interrupt_signal,
                                                         set_message, set_progress, 0.2f, 0.3f);
-        if (checkout_result == -2) {
+        if (checkout_result == CHEAT_OP_CANCELLED) {
             cancelled = true;
             goto cleanup;
         }
-        if (checkout_result != 0) {
+        if (checkout_result == CHEAT_OP_BUSY) {
+            result = make_run_error(summary,
+                                    "Cheat database is busy. Please wait for the current operation to finish.");
+            goto cleanup;
+        }
+        if (checkout_result != CHEAT_OP_OK) {
             result = make_run_error(summary, "Failed to check out cheats for this system.");
             goto cleanup;
         }
@@ -821,7 +894,7 @@ run_result download_cheats_for_console(const console_dir *console,
     get_cheats_path(cheats_base, sizeof(cheats_base));
 
     for (int i = 0; i < rom_count; i++) {
-        if (interrupt_signal && *interrupt_signal != 0) {
+        if (interrupt_signal && atomic_load(interrupt_signal) != 0) {
             cancelled = true;
             break;
         }
@@ -854,7 +927,7 @@ run_result download_cheats_for_console(const console_dir *console,
             continue;
         }
 
-        if (copy_file(src_path, dest_path) == 0)
+        if (copy_cheat_file(src_path, dest_path) == 0)
             summary.found++;
         else
             summary.errors++;

@@ -10,6 +10,7 @@
 #include "apostrophe_widgets.h"
 
 #include "device.h"
+#include "queue.h"
 #include "screenscraper.h"
 #include "ui.h"
 
@@ -47,7 +48,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    queue_init();
     run_app();
+    queue_shutdown();
 
     ap_quit();
     return 0;

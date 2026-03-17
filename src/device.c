@@ -14,6 +14,12 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* Suppress GCC warnings about snprintf truncation when combining
+   PATH_MAX-sized strings — truncation is safe by design. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
+
 /* ── Media type definitions ──────────────────────────────── */
 
 const media_type_def all_media_types[] = {
@@ -136,8 +142,7 @@ static bool is_shortcut_folder(const char *path) {
     return stat(marker, &st) == 0;
 }
 
-static const char *extract_tag(const char *name) {
-    static char tag_buf[64];
+static bool extract_tag(const char *name, char *buf, size_t buflen) {
     const char *open = NULL;
     const char *close = NULL;
 
@@ -147,11 +152,11 @@ static const char *extract_tag(const char *name) {
         if (*p == ')') close = p;
     }
     if (!open || !close || close <= open)
-        return NULL;
+        return false;
 
     size_t len = (size_t)(close - open - 1);
-    if (len == 0 || len >= sizeof(tag_buf))
-        return NULL;
+    if (len == 0 || len >= buflen)
+        return false;
 
     /* Trim whitespace */
     const char *start = open + 1;
@@ -160,12 +165,12 @@ static const char *extract_tag(const char *name) {
     while (end > start && *end == ' ') end--;
 
     len = (size_t)(end - start + 1);
-    if (len == 0 || len >= sizeof(tag_buf))
-        return NULL;
+    if (len == 0 || len >= buflen)
+        return false;
 
-    memcpy(tag_buf, start, len);
-    tag_buf[len] = '\0';
-    return tag_buf;
+    memcpy(buf, start, len);
+    buf[len] = '\0';
+    return true;
 }
 
 static void extract_display_name(const char *name, char *buf, size_t buflen) {
@@ -211,9 +216,11 @@ bool is_hidden(const char *name) {
 }
 
 static bool is_mac_dotfile(const char *name) {
+    char tag[64];
+
     if (name[0] != '.')
         return false;
-    return extract_tag(name) == NULL;
+    return !extract_tag(name, tag, sizeof(tag));
 }
 
 static bool dir_has_visible_content(const char *path) {
@@ -294,8 +301,8 @@ int scan_console_dirs(bool show_hidden, console_dir **out) {
             base_name[nlen - 9] = '\0';
         }
 
-        const char *tag = extract_tag(base_name);
-        if (!tag)
+        char tag[64];
+        if (!extract_tag(base_name, tag, sizeof(tag)))
             continue;
 
         if (count >= capacity) {

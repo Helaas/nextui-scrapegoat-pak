@@ -1,26 +1,27 @@
 #ifndef DEVICE_H
 #define DEVICE_H
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 
 /* ── Data types ───────────────────────────────────────────────── */
 
 typedef struct {
-    char name[256];     /* e.g. "Game Boy Advance (GBA)" or "...GBA).disabled" */
-    char tag[32];       /* e.g. "GBA" */
-    char path[512];     /* full path to the directory */
-    char display[256];  /* display name without tag suffix */
-    bool is_disabled;   /* true when folder ends with ".disabled" */
+    char name[256];      /* e.g. "Game Boy Advance (GBA)" or "...GBA).disabled" */
+    char tag[64];        /* e.g. "GBA" */
+    char path[PATH_MAX]; /* full path to the directory */
+    char display[256];   /* display name without tag suffix */
+    bool is_disabled;    /* true when folder ends with ".disabled" */
 } console_dir;
 
 typedef struct {
-    char name[256];     /* filename or folder name */
-    char path[512];     /* full path */
-    char display[256];  /* display name (no extension, no ".disabled" suffix) */
-    bool is_multi_disc; /* subdirectory containing {name}.m3u */
-    bool is_cue_folder; /* subdirectory containing {name}.cue */
-    bool is_disabled;   /* true when file/folder ends with ".disabled" */
+    char name[256];      /* filename or folder name */
+    char path[PATH_MAX]; /* full path */
+    char display[256];   /* display name (no extension, no ".disabled" suffix) */
+    bool is_multi_disc;  /* subdirectory containing {name}.m3u */
+    bool is_cue_folder;  /* subdirectory containing {name}.cue */
+    bool is_disabled;    /* true when file/folder ends with ".disabled" */
 } rom_file;
 
 typedef struct {

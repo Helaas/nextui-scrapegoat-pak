@@ -17,6 +17,12 @@
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_surface.h>
 
+/* Suppress GCC warnings about snprintf truncation when combining
+   PATH_MAX-sized strings — truncation is safe by design. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
+
 /* ── Credentials ──────────────────────────────────────────── */
 
 bool ss_is_debug(void) {
@@ -715,11 +721,23 @@ typedef struct {
     progress_fn set_progress;
 } hud_ctx;
 
-static void set_fatal_message_locked(scrape_state *state, const char *message) {
+static void set_fatal_message_unlocked(scrape_state *state, const char *message) {
     if (message && message[0] != '\0' && state->fatal_message[0] == '\0') {
         snprintf(state->fatal_message, sizeof(state->fatal_message), "%s", message);
     }
     atomic_store(&state->abort_requested, 1);
+}
+
+static void set_fatal_message_locked(scrape_state *state, const char *message) {
+    pthread_mutex_lock(&state->mu);
+    set_fatal_message_unlocked(state, message);
+    pthread_mutex_unlock(&state->mu);
+}
+
+static void copy_fatal_message(scrape_state *state, char *buf, size_t buflen) {
+    pthread_mutex_lock(&state->mu);
+    snprintf(buf, buflen, "%s", state->fatal_message);
+    pthread_mutex_unlock(&state->mu);
 }
 
 static void record_completion_locked(scrape_state *state, int found_delta,
@@ -741,12 +759,12 @@ static void record_completion_locked(scrape_state *state, int found_delta,
             snprintf(quota_message, sizeof(quota_message),
                      "Daily quota exceeded (%d/%d).",
                      result->requests_today, result->max_requests);
-            set_fatal_message_locked(state, quota_message);
+            set_fatal_message_unlocked(state, quota_message);
         }
     }
 
     if (fatal_message && fatal_message[0] != '\0')
-        set_fatal_message_locked(state, fatal_message);
+        set_fatal_message_unlocked(state, fatal_message);
 
     if (state->last_ns > 0) {
         long elapsed = now_ns - state->last_ns;
@@ -1002,8 +1020,11 @@ run_result scrape_console(const console_dir *console, bool missing_only,
     if (set_progress)
         set_progress((float)atomic_load(&state.completed) / (float)rom_count);
 
-    if (state.fatal_message[0] != '\0') {
-        run_result result = make_run_result(RUN_ERROR, state.summary, state.fatal_message);
+    char fatal_message[256];
+    copy_fatal_message(&state, fatal_message, sizeof(fatal_message));
+
+    if (fatal_message[0] != '\0') {
+        run_result result = make_run_result(RUN_ERROR, state.summary, fatal_message);
         for (int i = 0; i < state.artwork_count; i++) free(state.artwork_types[i]);
         free(state.artwork_types);
         for (int i = 0; i < state.region_count; i++) free(state.region_prio[i]);
@@ -1080,12 +1101,13 @@ run_result scrape_console(const console_dir *console, bool missing_only,
         }
     }
 
-    if (set_progress && state.fatal_message[0] == '\0')
+    copy_fatal_message(&state, fatal_message, sizeof(fatal_message));
+    if (set_progress && fatal_message[0] == '\0')
         set_progress(1.0f);
 
     run_result result;
-    if (state.fatal_message[0] != '\0') {
-        result = make_run_result(RUN_ERROR, state.summary, state.fatal_message);
+    if (fatal_message[0] != '\0') {
+        result = make_run_result(RUN_ERROR, state.summary, fatal_message);
     } else if (is_cancel_requested(interrupt_signal)) {
         result = make_run_result(RUN_CANCELLED, state.summary, NULL);
     } else {
