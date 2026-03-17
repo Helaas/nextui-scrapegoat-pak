@@ -1,18 +1,20 @@
 {
   "name": "ScrapeGoat",
-  "version": "v1.0.2",
+  "version": "v2.0.0",
   "type": "TOOL",
   "description": "Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your ROM library.",
   "author": "Helaas",
   "repo_url": "https://github.com/Helaas/nextui-scrapegoat-pak",
   "release_filename": "ScrapeGoat.pakz",
   "changelog": {
+    "v2.0.0": "Complete rewrite in C using Apostrophe UI. Add Miyoo Flip (my355) support.",
     "v1.0.2": "Bugfix for certain consoles being incorrectly mapped.",
     "v1.0.1": "Subfolder support for cheats and artwork, safer media downloads via temp files.",
     "v1.0.0": "Initial release: ScreenScraper.fr artwork scraping, Libretro cheat downloading."
   },
   "platforms": [
     "tg5040",
-    "tg5050"
+    "tg5050",
+    "my355"
   ]
 }

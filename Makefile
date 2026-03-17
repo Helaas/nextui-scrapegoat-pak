@@ -1,41 +1,63 @@
 # ──────────────────────────────────────────────────────────────
-# ScrapeGoat Pak — Build System
+# ScrapeGoat Pak — Build System (C / Apostrophe)
 # ──────────────────────────────────────────────────────────────
 
-APP_NAME   := scrapegoat
-PAK_NAME   := ScrapeGoat
-MODULE     := github.com/Helaas/nextui-scrapegoat-pak
-GABAGOOL   := github.com/BrandonKowalski/gabagool/v2
-DOCKER_TG5040 := ghcr.io/loveretro/tg5040-toolchain
-DOCKER_TG5050 := ghcr.io/loveretro/tg5050-toolchain
+SHELL := /bin/bash
 
-BUILD_DIR        := build
-CACHE_DIR        := .cache
-TOOLCHAIN_CACHE  := $(CACHE_DIR)/go-toolchain
+APP_NAME := scrapegoat
+PAK_NAME := ScrapeGoat
+APOSTROPHE_DIR := third_party/apostrophe
+BUILD_DIR := build
+DIST_DIR := $(BUILD_DIR)/release
+STAGING_DIR := $(BUILD_DIR)/staging
+CACHE_DIR := .cache
 GIT_STATIC_CACHE := $(CACHE_DIR)/git-static
-SDL2_GFX_CACHE   := $(CACHE_DIR)/sdl2-gfx
 
 GIT_VERSION      := 2.53.0
 CURL_VERSION     := 8.11.1
-SDL2_GFX_VERSION := main
 
-GO_VERSION   := 1.24.2
-GO_SDK_CACHE := $(CACHE_DIR)/go-sdk
+SRC_FILES := $(shell find src third_party/cJSON third_party/md5 third_party/miniz -name '*.c' -print 2>/dev/null | sort)
 
-LDFLAGS = -X main.ssDevID=$(SCREENSCRAPER_DEV_ID) -X main.ssDevPwd=$(SCREENSCRAPER_DEV_PASSWORD) \
-          -X main.ssDebugPwd=$(SCREENSCRAPER_DEBUG_PASSWORD) \
-          -X main.ssForceLevel=$(SCREENSCRAPER_FORCE_LEVEL) \
-          -X main.ssForceUpdate=$(SCREENSCRAPER_FORCE_UPDATE)
+TG5040_TOOLCHAIN := ghcr.io/loveretro/tg5040-toolchain:latest
+TG5050_TOOLCHAIN := ghcr.io/loveretro/tg5050-toolchain:latest
+MY355_TOOLCHAIN  := ghcr.io/loveretro/my355-toolchain:latest
+ADB ?= adb
+
+COMMON_INCLUDES := -I$(APOSTROPHE_DIR)/include -Ithird_party/cJSON -Ithird_party/md5 -Ithird_party/miniz
 
 # ── Credential validation ─────────────────────────────────────
-# Load environment variables from .env.local (for ScreenScraper credentials)
-# This file must be created for build targets to succeed
-
 -include .env.local
 
-# ── Helper target for credential checking ─────────────────────
+CREDENTIAL_DEFINES :=
+ifdef SCREENSCRAPER_DEV_ID
+CREDENTIAL_DEFINES += -DSCREENSCRAPER_DEV_ID=\"$(SCREENSCRAPER_DEV_ID)\"
+endif
+ifdef SCREENSCRAPER_DEV_PASSWORD
+CREDENTIAL_DEFINES += -DSCREENSCRAPER_DEV_PASSWORD=\"$(SCREENSCRAPER_DEV_PASSWORD)\"
+endif
+ifdef SCREENSCRAPER_DEBUG_PASSWORD
+CREDENTIAL_DEFINES += -DSCREENSCRAPER_DEBUG_PASSWORD=\"$(SCREENSCRAPER_DEBUG_PASSWORD)\"
+endif
+ifdef SCREENSCRAPER_FORCE_LEVEL
+CREDENTIAL_DEFINES += -DSCREENSCRAPER_FORCE_LEVEL=\"$(SCREENSCRAPER_FORCE_LEVEL)\"
+endif
+ifdef SCREENSCRAPER_FORCE_UPDATE
+CREDENTIAL_DEFINES += -DSCREENSCRAPER_FORCE_UPDATE=\"$(SCREENSCRAPER_FORCE_UPDATE)\"
+endif
 
-.PHONY: check-credentials
+.PHONY: all native mac run-mac run-native tg5040 tg5050 my355 \
+	package package-tg5040 package-tg5050 package-my355 do-package \
+	deploy deploy-platform clean clean-all help check-credentials \
+	build-git-static clean-git-static
+
+# ── Default target ──────────────────────────────────────────
+
+native: mac
+run-native: run-mac
+all: tg5040 tg5050 my355
+
+# ── Credential checking ────────────────────────────────────
+
 check-credentials:
 	@if [ ! -f .env.local ]; then \
 		echo "ERROR: .env.local not found"; \
@@ -47,140 +69,54 @@ check-credentials:
 		exit 1; \
 	fi
 	@echo "✓ Credentials loaded from .env.local"
-	@if [ ! -z "$(SCREENSCRAPER_FORCE_LEVEL)" ]; then \
-		echo "ℹ Debug mode: forcelevel=$(SCREENSCRAPER_FORCE_LEVEL)"; \
-	fi
 
-# ── Debug helper ──────────────────────────────────────────────
-# Shows threading information for different force levels
-
-.PHONY: debug-levels
-debug-levels:
-	@echo "ScreenScraper API Force Levels & Thread Limits:"
-	@echo ""
-	@echo "For each debug user level, the API enforces different thread limits."
-	@echo "Using forcelevel=X in debug mode tests the behavior at that level."
-	@echo ""
-	@echo "Examples (adjust SCREENSCRAPER_FORCE_LEVEL in .env.local):"
-	@echo "  Level 30  → maxthreads=1   (very slow, sequential)"
-	@echo "  Level 50  → maxthreads=2   (slow)"
-	@echo "  Level 70  → maxthreads=5   (moderate)"
-	@echo "  Level 80  → maxthreads=10  (fast)"
-	@echo "  Level 90+ → maxthreads=20+ (fastest)"
-	@echo ""
-	@echo "See: https://www.screenscraper.fr/webapi2.php → userlevelsListe.php"
-	@echo ""
-	@echo "To test with more threads, edit .env.local:"
-	@echo "  SCREENSCRAPER_FORCE_LEVEL=80"
-	@echo "Then rebuild: make mac"
-
-# ── Platform auto-detection ──────────────────────────────────
-
-ifdef PLATFORM
-ifeq ($(PLATFORM),tg5040)
-all: tg5040
-else ifeq ($(PLATFORM),tg5050)
-all: tg5050
-else
-all: mac
-endif
-else ifeq ($(shell uname -s),Darwin)
-all: mac
-else
-all: tg5040
-endif
-
-# ── Native macOS build ───────────────────────────────────────
+# ── Native macOS build ──────────────────────────────────────
 
 mac: check-credentials
-	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 go build -mod=vendor -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/$(APP_NAME) .
+	@mkdir -p $(BUILD_DIR)/mac
+	cc -std=gnu11 -O0 -g \
+		-DPLATFORM_MAC \
+		$(CREDENTIAL_DEFINES) \
+		$(COMMON_INCLUDES) \
+		$(shell pkg-config --cflags sdl2 SDL2_ttf SDL2_image libcurl) \
+		-o $(BUILD_DIR)/mac/$(APP_NAME) \
+		$(SRC_FILES) \
+		$(shell pkg-config --libs sdl2 SDL2_ttf SDL2_image libcurl) \
+		-lm -lpthread
 
-# ── Docker ARM64 builds ──────────────────────────────────────
-# SDL2/SDL2_image/SDL2_ttf are provided by device firmware (sysroot .so stubs used at link time).
-# SDL2_gfx is cross-compiled as a static library and linked directly into the binary.
-# git is a statically compiled binary with no shared lib deps.
-# No lib/ directory is needed — nothing is bundled.
+run-mac: mac
+	./$(BUILD_DIR)/mac/$(APP_NAME)
 
-SYSROOT := /opt/aarch64-nextui-linux-gnu/aarch64-nextui-linux-gnu/libc
+# ── Docker cross-compilation ────────────────────────────────
 
-define DOCKER_BUILD
-	@mkdir -p $(BUILD_DIR)/$(1)/bin $(CACHE_DIR)/go-mod $(CACHE_DIR)/go-build $(TOOLCHAIN_CACHE)
-	docker run --rm --platform linux/arm64 \
-		-v "$(CURDIR)":/build \
-		-v "$(CURDIR)/$(GO_SDK_CACHE)":/usr/local/go \
-		-v "$(CURDIR)/$(CACHE_DIR)/go-mod":/root/go/pkg/mod \
-		-v "$(CURDIR)/$(CACHE_DIR)/go-build":/root/.cache/go-build \
-		-v "$(CURDIR)/$(TOOLCHAIN_CACHE)":/root/.cache/go-toolchain \
-		-v "$(CURDIR)/$(SDL2_GFX_CACHE)":/sdl2-gfx \
-		-w /build \
-		$(2) \
-		sh -c 'set -e && \
-		       SYSROOT=$(SYSROOT) && \
-		       cp /sdl2-gfx/libSDL2_gfx.a $$SYSROOT/usr/lib/ && \
-		       cp /sdl2-gfx/include/*.h $$SYSROOT/usr/include/ && \
-		       cp /sdl2-gfx/include/*.h $$SYSROOT/usr/include/SDL2/ && \
-		       cp /sdl2-gfx/pkgconfig/*.pc $$SYSROOT/usr/lib/pkgconfig/ && \
-		       PATH=/usr/local/go/bin:$$PATH \
-		       GOTOOLCHAINCACHE=/root/.cache/go-toolchain \
-		       CGO_ENABLED=1 \
-		       CC=aarch64-nextui-linux-gnu-gcc \
-		       PKG_CONFIG_SYSROOT_DIR=$$SYSROOT \
-		       PKG_CONFIG_LIBDIR=$$SYSROOT/usr/lib/pkgconfig \
-		       CGO_LDFLAGS="-lm" \
-		       GOOS=linux GOARCH=arm64 \
-		       go build -mod=vendor -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(1)/$(APP_NAME) . && \
-		       sh /build/scripts/bundle-git.sh $(BUILD_DIR)/$(1)'
-endef
+tg5040: check-credentials
+	@mkdir -p $(BUILD_DIR)/tg5040
+	docker run --rm \
+		-v "$(CURDIR)":/workspace \
+		-e CREDENTIAL_DEFINES='$(CREDENTIAL_DEFINES)' \
+		$(TG5040_TOOLCHAIN) \
+		make -C /workspace -f ports/tg5040/Makefile \
+			BUILD_DIR=/workspace/$(BUILD_DIR)/tg5040
 
-tg5040: check-credentials $(GIT_STATIC_CACHE)/git $(GO_SDK_CACHE)/bin/go $(SDL2_GFX_CACHE)/libSDL2_gfx.a
-	$(call DOCKER_BUILD,tg5040,$(DOCKER_TG5040))
+tg5050: check-credentials
+	@mkdir -p $(BUILD_DIR)/tg5050
+	docker run --rm \
+		-v "$(CURDIR)":/workspace \
+		-e CREDENTIAL_DEFINES='$(CREDENTIAL_DEFINES)' \
+		$(TG5050_TOOLCHAIN) \
+		make -C /workspace -f ports/tg5050/Makefile \
+			BUILD_DIR=/workspace/$(BUILD_DIR)/tg5050
 
-tg5050: check-credentials $(GIT_STATIC_CACHE)/git $(GO_SDK_CACHE)/bin/go $(SDL2_GFX_CACHE)/libSDL2_gfx.a
-	$(call DOCKER_BUILD,tg5050,$(DOCKER_TG5050))
-
-embedded: tg5040 tg5050
-
-# ── SDL2_gfx static library (cross-compiled, cached) ─────────
-# Builds libSDL2_gfx.a using the tg5040 toolchain cross-compiler against the
-# toolchain sysroot's SDL2 2.26.1. Also creates pkg-config .pc files for
-# SDL2_gfx, SDL2_image, and SDL2_ttf (which are missing from the sysroot).
-# Result is cached in .cache/sdl2-gfx/ — only rebuilt when missing.
-# To force a rebuild: make clean-sdl2-gfx
-
-build-sdl2-gfx: $(SDL2_GFX_CACHE)/libSDL2_gfx.a
-
-$(SDL2_GFX_CACHE)/libSDL2_gfx.a:
-	@mkdir -p $(SDL2_GFX_CACHE)/include $(SDL2_GFX_CACHE)/pkgconfig
-	docker run --rm --platform linux/arm64 \
-		-v "$(CURDIR)/$(SDL2_GFX_CACHE)":/out \
-		$(DOCKER_TG5040) \
-		sh -c 'set -e && \
-		       SYSROOT=$(SYSROOT) && \
-		       CC=aarch64-nextui-linux-gnu-gcc && \
-		       AR=aarch64-nextui-linux-gnu-ar && \
-		       wget -q "https://github.com/ferzkopp/SDL2_gfx/archive/refs/heads/$(SDL2_GFX_VERSION).tar.gz" \
-		            -O /tmp/sdl2-gfx.tar.gz && \
-		       cd /tmp && tar xf sdl2-gfx.tar.gz && cd SDL2_gfx-$(SDL2_GFX_VERSION) && \
-		       $$CC -O2 \
-		           -I$$SYSROOT/usr/include \
-		           -I$$SYSROOT/usr/include/SDL2 \
-		           -c SDL2_gfxPrimitives.c SDL2_imageFilter.c SDL2_rotozoom.c SDL2_framerate.c && \
-		       $$AR rcs /out/libSDL2_gfx.a \
-		           SDL2_gfxPrimitives.o SDL2_imageFilter.o SDL2_rotozoom.o SDL2_framerate.o && \
-		       cp SDL2_framerate.h SDL2_gfxPrimitives.h SDL2_imageFilter.h SDL2_rotozoom.h /out/include/ && \
-		       printf "prefix=/usr\nexec_prefix=\$${prefix}\nlibdir=\$${exec_prefix}/lib\nincludedir=\$${prefix}/include\n\nName: SDL2_gfx\nDescription: SDL2 graphics primitives\nVersion: 1.0.4\nLibs: -L\$${libdir} -lSDL2_gfx -lm\nCflags: -I\$${includedir} -I\$${includedir}/SDL2\n" > /out/pkgconfig/SDL2_gfx.pc && \
-		       printf "prefix=/usr\nexec_prefix=\$${prefix}\nlibdir=\$${exec_prefix}/lib\nincludedir=\$${prefix}/include\n\nName: SDL2_image\nDescription: SDL2 image loading library\nVersion: 2.0.1\nLibs: -L\$${libdir} -lSDL2_image\nCflags: -I\$${includedir} -I\$${includedir}/SDL2\n" > /out/pkgconfig/SDL2_image.pc && \
-		       printf "prefix=/usr\nexec_prefix=\$${prefix}\nlibdir=\$${exec_prefix}/lib\nincludedir=\$${prefix}/include\n\nName: SDL2_ttf\nDescription: SDL2 TrueType font rendering library\nVersion: 2.0.10\nLibs: -L\$${libdir} -lSDL2_ttf\nCflags: -I\$${includedir} -I\$${includedir}/SDL2\n" > /out/pkgconfig/SDL2_ttf.pc && \
-		       echo "sdl2-gfx: build done. $(ls -lh /out/libSDL2_gfx.a)"'
-
-clean-sdl2-gfx:
-	rm -rf $(SDL2_GFX_CACHE)
+my355: check-credentials
+	@mkdir -p $(BUILD_DIR)/my355
+	docker run --rm \
+		-v "$(CURDIR)":/workspace \
+		-e CREDENTIAL_DEFINES='$(CREDENTIAL_DEFINES)' \
+		$(MY355_TOOLCHAIN) \
+		make -C /workspace -f ports/my355/Makefile \
+			BUILD_DIR=/workspace/$(BUILD_DIR)/my355
 
 # ── Static git build (Alpine + musl, cached) ─────────────────
-# Builds a minimal static git binary with HTTPS support.
-# Result is cached in .cache/git-static/ — only rebuilt when missing.
-# To force a rebuild: make clean-git-static
 
 build-git-static: $(GIT_STATIC_CACHE)/git
 
@@ -197,110 +133,98 @@ $(GIT_STATIC_CACHE)/git:
 clean-git-static:
 	rm -rf $(GIT_STATIC_CACHE)
 
-# ── Go SDK download (ARM64, cached) ──────────────────────────
-# Downloads the Go toolchain for use inside the loveretro toolchain images.
-# Result is cached in .cache/go-sdk/ — only rebuilt when missing.
-# To force a rebuild: make clean-go-sdk
+# ── Packaging ───────────────────────────────────────────────
 
-build-go-sdk: $(GO_SDK_CACHE)/bin/go
+package-tg5040: tg5040 $(GIT_STATIC_CACHE)/git
+	@$(MAKE) do-package PLATFORM=tg5040
 
-$(GO_SDK_CACHE)/bin/go:
-	@mkdir -p $(GO_SDK_CACHE)
-	docker run --rm --platform linux/arm64 \
-		-v "$(CURDIR)/$(GO_SDK_CACHE)":/go-sdk \
-		alpine:3.21 \
-		sh -c 'apk add --no-cache wget ca-certificates && \
-		       wget -q "https://go.dev/dl/go$(GO_VERSION).linux-arm64.tar.gz" -O /tmp/go.tar.gz && \
-		       tar -C /go-sdk --strip-components=1 -xf /tmp/go.tar.gz'
+package-tg5050: tg5050 $(GIT_STATIC_CACHE)/git
+	@$(MAKE) do-package PLATFORM=tg5050
 
-clean-go-sdk:
-	rm -rf $(GO_SDK_CACHE)
+package-my355: my355 $(GIT_STATIC_CACHE)/git
+	@$(MAKE) do-package PLATFORM=my355
 
-# ── Vendor patches ────────────────────────────────────────────
-# Applies patches to vendored dependencies that are not yet released upstream.
-# Idempotent: each block checks whether the patch is already applied before running.
-
-GABAGOOL_PROCESS_MSG := vendor/github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/process_message.go
-CERTIFIABLE := vendor/github.com/BrandonKowalski/certifiable/certifiable.go
-
-patch-vendor:
-	@if [ -f "$(CERTIFIABLE)" ] && ! grep -q 'func CACerts' "$(CERTIFIABLE)"; then \
-		echo "Patching certifiable to export CA certs..."; \
-		cd "$(CURDIR)" && git apply --whitespace=nowarn patches/certifiable-export-cacerts.patch 2>/dev/null || \
-			patch -p1 < patches/certifiable-export-cacerts.patch; \
-		echo "Patch applied."; \
-	else \
-		echo "Certifiable CACerts patch already applied (or vendor not present)."; \
+do-package:
+	@rm -rf $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak
+	@mkdir -p $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/resources/bin
+	@cp $(BUILD_DIR)/$(PLATFORM)/$(APP_NAME) $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/
+	@cp launch.sh pak.json LICENSE $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/
+	@cp $(GIT_STATIC_CACHE)/git $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/resources/bin/
+	@cp $(GIT_STATIC_CACHE)/git-remote-https $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/resources/bin/ 2>/dev/null || true
+	@if [ -d "$(BUILD_DIR)/$(PLATFORM)/lib" ]; then \
+		mkdir -p "$(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/lib"; \
+		cp -a "$(BUILD_DIR)/$(PLATFORM)/lib/." "$(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/lib/"; \
 	fi
-	@if [ -f "$(GABAGOOL_PROCESS_MSG)" ] && ! grep -q 'InterruptButton' "$(GABAGOOL_PROCESS_MSG)"; then \
-		echo "Patching Gabagool ProcessMessage (DynamicMessage, InterruptButton, MessageLines)..."; \
-		cd "$(CURDIR)" && git apply --whitespace=nowarn patches/gabagool-process-message.patch 2>/dev/null || \
-			patch -p1 < patches/gabagool-process-message.patch; \
-		echo "Patch applied."; \
-	else \
-		echo "Gabagool ProcessMessage patch already applied (or vendor not present)."; \
+	@mkdir -p $(DIST_DIR)/$(PLATFORM)
+	@rm -f $(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip
+	@cd $(BUILD_DIR)/$(PLATFORM) && zip -r "$(CURDIR)/$(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip" "$(PAK_NAME).pak" -x '.*'
+
+package: package-tg5040 package-tg5050 package-my355
+	@rm -rf $(STAGING_DIR)
+	@mkdir -p $(STAGING_DIR)/Tools/tg5040 $(STAGING_DIR)/Tools/tg5050 $(STAGING_DIR)/Tools/my355
+	@cp -a $(BUILD_DIR)/tg5040/$(PAK_NAME).pak $(STAGING_DIR)/Tools/tg5040/
+	@cp -a $(BUILD_DIR)/tg5050/$(PAK_NAME).pak $(STAGING_DIR)/Tools/tg5050/
+	@cp -a $(BUILD_DIR)/my355/$(PAK_NAME).pak $(STAGING_DIR)/Tools/my355/
+	@mkdir -p $(DIST_DIR)/all
+	@rm -f $(DIST_DIR)/all/$(PAK_NAME).pakz
+	@cd $(STAGING_DIR) && zip -9 -r "$(CURDIR)/$(DIST_DIR)/all/$(PAK_NAME).pakz" . -x '.*'
+
+# ── ADB deploy ──────────────────────────────────────────────
+
+deploy:
+	@echo "Detecting platform..."
+	@SERIAL="$(ADB_SERIAL)"; \
+	if [ -z "$$SERIAL" ]; then \
+		SERIAL=$$($(ADB) devices | awk 'NR>1 && $$2=="device" {print $$1; exit}'); \
+	fi; \
+	if [ -z "$$SERIAL" ]; then \
+		echo "Error: No online adb device found."; \
+		exit 1; \
+	fi; \
+	ADB_CMD="$(ADB) -s $$SERIAL"; \
+	FINGERPRINT=$$($$ADB_CMD shell ' \
+		cat /proc/device-tree/compatible 2>/dev/null; \
+		echo; \
+		cat /proc/device-tree/model 2>/dev/null; \
+		echo; \
+		uname -a 2>/dev/null' 2>/dev/null | tr '\000' '\n' | tr -d '\r'); \
+	case "$$FINGERPRINT" in \
+		*rk3566*|*miyoo-355*) PLATFORM=my355 ;; \
+		*allwinner,a523*|*sun55iw3*) PLATFORM=tg5050 ;; \
+		*allwinner,a133*|*sun50iw*) PLATFORM=tg5040 ;; \
+		*allwinner*) \
+			if printf '%s' "$$FINGERPRINT" | grep -qi 'a523'; then \
+				PLATFORM=tg5050; \
+			else \
+				PLATFORM=tg5040; \
+			fi \
+			;; \
+		*) \
+			echo "Error: Could not detect a supported platform from adb fingerprint."; \
+			echo "  Serial: $$SERIAL"; \
+			echo "  Fingerprint snippet: $$(printf '%s' "$$FINGERPRINT" | head -c 240)"; \
+			exit 1; \
+			;; \
+	esac; \
+	echo "Detected adb serial: $$SERIAL"; \
+	echo "Detected platform: $$PLATFORM"; \
+	$(MAKE) deploy-platform PLATFORM=$$PLATFORM SERIAL=$$SERIAL
+
+deploy-platform:
+	@if [ -z "$(PLATFORM)" ] || [ -z "$(SERIAL)" ]; then \
+		echo "Error: deploy-platform requires PLATFORM and SERIAL."; \
+		exit 1; \
 	fi
+	@$(MAKE) package-$(PLATFORM)
+	@ADB_CMD="$(ADB) -s $(SERIAL)"; \
+	PAK_ROOT="/mnt/SDCARD/Tools/$(PLATFORM)"; \
+	PAK_DIR="$$PAK_ROOT/$(PAK_NAME).pak"; \
+	echo "Deploying $(PAK_NAME).pak to $$PAK_DIR..."; \
+	$$ADB_CMD shell "rm -rf '$$PAK_DIR' && mkdir -p '$$PAK_ROOT'"; \
+	$$ADB_CMD push "$(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak" "$$PAK_ROOT/"; \
+	echo "Deploy complete."
 
-# ── Dependency management ────────────────────────────────────
-
-deps:
-	go get $(GABAGOOL)@latest
-	go mod tidy
-	go mod vendor
-	$(MAKE) patch-vendor
-
-# ── Packaging ────────────────────────────────────────────────
-
-package-tg5040: tg5040
-	@rm -rf $(BUILD_DIR)/pak-stage
-	@mkdir -p $(BUILD_DIR)/pak-stage/resources/bin
-	@mkdir -p $(BUILD_DIR)/release/tg5040
-	@rm -f $(BUILD_DIR)/release/tg5040/$(PAK_NAME).pak.zip
-	cp $(BUILD_DIR)/tg5040/$(APP_NAME) $(BUILD_DIR)/pak-stage/
-	cp launch.sh $(BUILD_DIR)/pak-stage/
-	cp pak.json $(BUILD_DIR)/pak-stage/
-	cp LICENSE $(BUILD_DIR)/pak-stage/ 2>/dev/null || true
-	cp $(BUILD_DIR)/tg5040/bin/* $(BUILD_DIR)/pak-stage/resources/bin/
-	cd $(BUILD_DIR)/pak-stage && zip -r "$(CURDIR)/$(BUILD_DIR)/release/tg5040/$(PAK_NAME).pak.zip" . -x '.*'
-	@rm -rf $(BUILD_DIR)/pak-stage
-
-package-tg5050: tg5050
-	@rm -rf $(BUILD_DIR)/pak-stage
-	@mkdir -p $(BUILD_DIR)/pak-stage/resources/bin
-	@mkdir -p $(BUILD_DIR)/release/tg5050
-	@rm -f $(BUILD_DIR)/release/tg5050/$(PAK_NAME).pak.zip
-	cp $(BUILD_DIR)/tg5050/$(APP_NAME) $(BUILD_DIR)/pak-stage/
-	cp launch.sh $(BUILD_DIR)/pak-stage/
-	cp pak.json $(BUILD_DIR)/pak-stage/
-	cp LICENSE $(BUILD_DIR)/pak-stage/ 2>/dev/null || true
-	cp $(BUILD_DIR)/tg5050/bin/* $(BUILD_DIR)/pak-stage/resources/bin/
-	cd $(BUILD_DIR)/pak-stage && zip -r "$(CURDIR)/$(BUILD_DIR)/release/tg5050/$(PAK_NAME).pak.zip" . -x '.*'
-	@rm -rf $(BUILD_DIR)/pak-stage
-
-package: package-tg5040 package-tg5050
-
-# ── TrimUI .pakz export ──────────────────────────────────────
-
-export-trimui: embedded
-	@rm -rf $(BUILD_DIR)/trimui-stage
-	@mkdir -p $(BUILD_DIR)/trimui-stage/Tools/tg5040/$(PAK_NAME).pak/resources/bin
-	@mkdir -p $(BUILD_DIR)/trimui-stage/Tools/tg5050/$(PAK_NAME).pak/resources/bin
-	@mkdir -p $(BUILD_DIR)/release/trimui
-	@rm -f $(BUILD_DIR)/release/trimui/$(PAK_NAME).pakz
-	cp $(BUILD_DIR)/tg5040/$(APP_NAME) $(BUILD_DIR)/trimui-stage/Tools/tg5040/$(PAK_NAME).pak/
-	cp launch.sh $(BUILD_DIR)/trimui-stage/Tools/tg5040/$(PAK_NAME).pak/
-	cp pak.json $(BUILD_DIR)/trimui-stage/Tools/tg5040/$(PAK_NAME).pak/
-	cp LICENSE $(BUILD_DIR)/trimui-stage/Tools/tg5040/$(PAK_NAME).pak/ 2>/dev/null || true
-	cp $(BUILD_DIR)/tg5040/bin/* $(BUILD_DIR)/trimui-stage/Tools/tg5040/$(PAK_NAME).pak/resources/bin/
-	cp $(BUILD_DIR)/tg5050/$(APP_NAME) $(BUILD_DIR)/trimui-stage/Tools/tg5050/$(PAK_NAME).pak/
-	cp launch.sh $(BUILD_DIR)/trimui-stage/Tools/tg5050/$(PAK_NAME).pak/
-	cp pak.json $(BUILD_DIR)/trimui-stage/Tools/tg5050/$(PAK_NAME).pak/
-	cp LICENSE $(BUILD_DIR)/trimui-stage/Tools/tg5050/$(PAK_NAME).pak/ 2>/dev/null || true
-	cp $(BUILD_DIR)/tg5050/bin/* $(BUILD_DIR)/trimui-stage/Tools/tg5050/$(PAK_NAME).pak/resources/bin/
-	cd $(BUILD_DIR)/trimui-stage && zip -9 -r "$(CURDIR)/$(BUILD_DIR)/release/trimui/$(PAK_NAME).pakz" . -x '.*'
-	@rm -rf $(BUILD_DIR)/trimui-stage
-
-# ── Cleanup ───────────────────────────────────────────────────
+# ── Cleanup ─────────────────────────────────────────────────
 
 clean:
 	rm -rf $(BUILD_DIR)
@@ -308,26 +232,21 @@ clean:
 clean-all: clean
 	rm -rf $(CACHE_DIR)
 
-# ── Help ──────────────────────────────────────────────────────
+# ── Help ────────────────────────────────────────────────────
 
 help:
 	@echo "Targets:"
-	@echo "  all           Auto-detect platform and build"
+	@echo "  native        Build the mac development binary"
+	@echo "  run-native    Build and run the mac binary"
+	@echo "  all           Build tg5040, tg5050, and my355"
 	@echo "  mac           Build for macOS (native)"
-	@echo "  tg5040        Build for TG5040 (Docker ARM64)"
-	@echo "  tg5050        Build for TG5050 (Docker ARM64)"
-	@echo "  embedded      Build all embedded platforms"
-	@echo "  deps          Update Go dependencies + apply patches"
-	@echo "  patch-vendor  Apply vendor patches (certifiable CACerts, gabagool ProcessMessage)"
-	@echo "  package       Package both platforms (.pak.zip)"
-	@echo "  export-trimui Create .pakz for TrimUI Tools"
-	@echo "  build-sdl2-gfx    Cross-compile static SDL2_gfx (cached in .cache/sdl2-gfx/)"
-	@echo "  clean-sdl2-gfx    Remove cached SDL2_gfx (force rebuild)"
-	@echo "  build-git-static  Build static git binary (cached in .cache/git-static/)"
-	@echo "  clean-git-static  Remove cached static git binary (force rebuild)"
-	@echo "  build-go-sdk      Download Go SDK for ARM64 (cached in .cache/go-sdk/)"
-	@echo "  clean-go-sdk      Remove cached Go SDK (force re-download)"
-	@echo "  clean             Remove build artifacts"
-	@echo "  clean-all         Remove build + cache"
-
-.PHONY: all mac tg5040 tg5050 embedded build-sdl2-gfx clean-sdl2-gfx build-git-static clean-git-static build-go-sdk clean-go-sdk deps patch-vendor package package-tg5040 package-tg5050 export-trimui clean clean-all help check-credentials debug-levels
+	@echo "  run-mac       Build and run for macOS"
+	@echo "  tg5040        Build for TG5040 (Docker cross-compile)"
+	@echo "  tg5050        Build for TG5050 (Docker cross-compile)"
+	@echo "  my355         Build for Miyoo Flip (Docker cross-compile)"
+	@echo "  package       Package all platforms (.pak.zip + .pakz)"
+	@echo "  deploy        Detect adb platform, package, and push"
+	@echo "  build-git-static  Build static git binary (cached)"
+	@echo "  clean-git-static  Remove cached static git"
+	@echo "  clean         Remove build artifacts"
+	@echo "  clean-all     Remove build + cache"
