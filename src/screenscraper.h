@@ -37,6 +37,7 @@ int  ss_check_dev_credentials(void);
 typedef struct {
     char username[256];
     char password[256];
+    atomic_int *interrupt_signal;
 } ss_client;
 
 /* Result of a successful ROM lookup */
@@ -52,7 +53,8 @@ typedef struct {
 /* Search for a ROM on ScreenScraper.fr.
  * First tries MD5 match, falls back to filename.
  * artwork_types and region_prio are priority-ordered arrays.
- * Returns 0 on success (result filled), 1 if not found, -1 on error. */
+ * Returns 0 on success (result filled), 1 if not found,
+ * -1 on error, and -2 when cancelled. */
 int ss_search_rom(const ss_client *client, const rom_file *rom, int system_id,
                   char **artwork_types, int artwork_count,
                   char **region_prio, int region_count,
@@ -60,7 +62,7 @@ int ss_search_rom(const ss_client *client, const rom_file *rom, int system_id,
 
 /* Download media from URL and save as PNG at dest_path.
  * JPEG images are converted to PNG. Uses temp file + rename for safety.
- * Returns 0 on success, -1 on error. */
+ * Returns 0 on success, -1 on error, -2 when cancelled. */
 int ss_download_media(const ss_client *client, const char *media_url,
                       const char *dest_path);
 
@@ -72,12 +74,12 @@ typedef void (*message_fn)(const char *msg);
 
 /* Scrape all ROMs in a console directory using concurrent workers.
  * interrupt_signal: atomic flag — set to 1 to stop scraping.
- * Returns the scrape summary. */
-scrape_summary scrape_console(const console_dir *console, bool missing_only,
-                              const app_settings *settings,
-                              atomic_int *interrupt_signal,
-                              progress_fn set_progress,
-                              message_fn set_message);
+ * Returns the run status, summary, and any user-facing error. */
+run_result scrape_console(const console_dir *console, bool missing_only,
+                          const app_settings *settings,
+                          atomic_int *interrupt_signal,
+                          progress_fn set_progress,
+                          message_fn set_message);
 
 /* ── Utilities ────────────────────────────────────────────── */
 

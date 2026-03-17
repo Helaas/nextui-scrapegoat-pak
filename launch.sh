@@ -12,6 +12,11 @@ cd "$PAK_DIR"
 export PATH="$PAK_DIR/resources/bin:$PATH"
 export GIT_EXEC_PATH="$PAK_DIR/resources/bin"
 
+if [ -f "$PAK_DIR/lib/cacert.pem" ]; then
+    export SSL_CERT_FILE="$PAK_DIR/lib/cacert.pem"
+    export GIT_SSL_CAINFO="$SSL_CERT_FILE"
+fi
+
 if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
     export XDG_RUNTIME_DIR=/tmp/runtime-root
     mkdir -p "$XDG_RUNTIME_DIR"

@@ -4,10 +4,12 @@
 
 #include <curl/curl.h>
 #include <pthread.h>
-#include <stdatomic.h>
+#include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -31,6 +33,25 @@ int ss_check_dev_credentials(void) {
     return 0;
 }
 
+/* ── Error helpers ────────────────────────────────────────── */
+
+static _Thread_local char g_ss_last_error[256];
+
+static void ss_clear_last_error(void) {
+    g_ss_last_error[0] = '\0';
+}
+
+static void ss_set_last_error(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(g_ss_last_error, sizeof(g_ss_last_error), fmt, args);
+    va_end(args);
+}
+
+static const char *ss_last_error_message(void) {
+    return g_ss_last_error[0] ? g_ss_last_error : NULL;
+}
+
 /* ── cURL helpers ─────────────────────────────────────────── */
 
 typedef struct {
@@ -38,11 +59,58 @@ typedef struct {
     size_t size;
 } curl_buffer;
 
+static pthread_once_t g_curl_once = PTHREAD_ONCE_INIT;
+static CURLcode g_curl_global_result = CURLE_OK;
+
+static void curl_global_init_once(void) {
+    g_curl_global_result = curl_global_init(CURL_GLOBAL_DEFAULT);
+}
+
+static bool is_cancel_requested(atomic_int *interrupt_signal) {
+    return interrupt_signal && atomic_load(interrupt_signal) != 0;
+}
+
+static long monotonic_now_ns(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec * 1000000000L + now.tv_nsec;
+}
+
+static int sleep_with_cancel(int backoff_ms, atomic_int *interrupt_signal) {
+    int remaining = backoff_ms;
+    while (remaining > 0) {
+        int chunk_ms = remaining > 50 ? 50 : remaining;
+        if (is_cancel_requested(interrupt_signal))
+            return -1;
+        usleep((useconds_t)chunk_ms * 1000U);
+        remaining -= chunk_ms;
+    }
+    return 0;
+}
+
+static const char *ssl_cert_file(void) {
+    const char *ca = getenv("SSL_CERT_FILE");
+    return (ca && ca[0] != '\0') ? ca : NULL;
+}
+
+static int curl_xferinfo_cb(void *clientp,
+                            curl_off_t dltotal, curl_off_t dlnow,
+                            curl_off_t ultotal, curl_off_t ulnow) {
+    (void)dltotal;
+    (void)dlnow;
+    (void)ultotal;
+    (void)ulnow;
+
+    return is_cancel_requested((atomic_int *)clientp) ? 1 : 0;
+}
+
 static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
     size_t total = size * nmemb;
     curl_buffer *buf = (curl_buffer *)userdata;
     char *tmp = realloc(buf->data, buf->size + total + 1);
-    if (!tmp) return 0;
+    if (!tmp)
+        return 0;
+
     buf->data = tmp;
     memcpy(buf->data + buf->size, ptr, total);
     buf->size += total;
@@ -51,22 +119,48 @@ static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata
 }
 
 /* Perform a GET request with retries and exponential backoff.
- * Returns the HTTP response body in *out_buf (caller frees ->data).
- * Returns the HTTP status code, or -1 on complete failure. */
-static int http_get(const char *url, const char *user_agent,
-                    curl_buffer *out_buf, int max_retries) {
+ * Returns the HTTP response code, -1 on error, and -2 when cancelled. */
+static int http_get(const ss_client *client, const char *url, const char *user_agent,
+                    curl_buffer *out_buf, int max_retries,
+                    char *content_type_out, size_t content_type_len) {
+    atomic_int *interrupt_signal = client ? client->interrupt_signal : NULL;
+    const char *ca = ssl_cert_file();
+
     out_buf->data = NULL;
     out_buf->size = 0;
+    if (content_type_out && content_type_len > 0)
+        content_type_out[0] = '\0';
+
+    pthread_once(&g_curl_once, curl_global_init_once);
+    if (g_curl_global_result != CURLE_OK) {
+        ss_set_last_error("curl global init failed: %s",
+                          curl_easy_strerror(g_curl_global_result));
+        return -1;
+    }
 
     CURL *curl = curl_easy_init();
-    if (!curl) return -1;
+    if (!curl) {
+        ss_set_last_error("curl init failed");
+        return -1;
+    }
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, user_agent);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, out_buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 100L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, curl_xferinfo_cb);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, interrupt_signal);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+
+    if (ca)
+        curl_easy_setopt(curl, CURLOPT_CAINFO, ca);
 
     long http_code = 0;
     int backoff_ms = 1000;
@@ -76,23 +170,44 @@ static int http_get(const char *url, const char *user_agent,
             free(out_buf->data);
             out_buf->data = NULL;
             out_buf->size = 0;
+            if (content_type_out && content_type_len > 0)
+                content_type_out[0] = '\0';
 
-            struct timespec ts = {backoff_ms / 1000, (backoff_ms % 1000) * 1000000L};
-            nanosleep(&ts, NULL);
+            if (sleep_with_cancel(backoff_ms, interrupt_signal) != 0) {
+                curl_easy_cleanup(curl);
+                return -2;
+            }
             backoff_ms *= 2;
         }
 
+        if (is_cancel_requested(interrupt_signal)) {
+            curl_easy_cleanup(curl);
+            return -2;
+        }
+
         CURLcode res = curl_easy_perform(curl);
+        if (res == CURLE_ABORTED_BY_CALLBACK || is_cancel_requested(interrupt_signal)) {
+            curl_easy_cleanup(curl);
+            return -2;
+        }
         if (res != CURLE_OK) {
             if (attempt < max_retries)
                 continue;
+            ss_set_last_error("request failed: %s (ca=%s)",
+                              curl_easy_strerror(res), ca ? ca : "(unset)");
             curl_easy_cleanup(curl);
             return -1;
         }
 
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        if (content_type_out && content_type_len > 0) {
+            char *content_type = NULL;
+            if (curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &content_type) == CURLE_OK &&
+                content_type != NULL) {
+                snprintf(content_type_out, content_type_len, "%s", content_type);
+            }
+        }
 
-        /* Retry on 5xx server errors */
         if (http_code >= 500 && attempt < max_retries)
             continue;
 
@@ -109,16 +224,34 @@ static char *build_search_url(const ss_client *client, const char *rom_name,
                               const char *md5_hash, long file_size,
                               int system_id) {
     CURL *curl = curl_easy_init();
-    if (!curl) return NULL;
+    if (!curl) {
+        ss_set_last_error("curl init failed while building request");
+        return NULL;
+    }
 
-    /* Build query string manually */
     char *enc_romname = curl_easy_escape(curl, rom_name, 0);
     char *enc_devid = curl_easy_escape(curl, SCREENSCRAPER_DEV_ID, 0);
     char *enc_devpwd = curl_easy_escape(curl, SCREENSCRAPER_DEV_PASSWORD, 0);
+    if (!enc_romname || !enc_devid || !enc_devpwd) {
+        ss_set_last_error("failed to encode ScreenScraper request");
+        if (enc_romname) curl_free(enc_romname);
+        if (enc_devid) curl_free(enc_devid);
+        if (enc_devpwd) curl_free(enc_devpwd);
+        curl_easy_cleanup(curl);
+        return NULL;
+    }
 
-    /* Start with required params */
     size_t url_cap = 2048;
     char *url = malloc(url_cap);
+    if (!url) {
+        ss_set_last_error("out of memory while building request");
+        curl_free(enc_romname);
+        curl_free(enc_devid);
+        curl_free(enc_devpwd);
+        curl_easy_cleanup(curl);
+        return NULL;
+    }
+
     int len = snprintf(url, url_cap,
         "%s/jeuInfos.php?devid=%s&devpassword=%s&softname=%s&output=json"
         "&romnom=%s&systemeid=%d",
@@ -128,6 +261,17 @@ static char *build_search_url(const ss_client *client, const char *rom_name,
     if (client->username[0]) {
         char *enc_user = curl_easy_escape(curl, client->username, 0);
         char *enc_pass = curl_easy_escape(curl, client->password, 0);
+        if (!enc_user || !enc_pass) {
+            ss_set_last_error("failed to encode ScreenScraper credentials");
+            if (enc_user) curl_free(enc_user);
+            if (enc_pass) curl_free(enc_pass);
+            free(url);
+            curl_free(enc_romname);
+            curl_free(enc_devid);
+            curl_free(enc_devpwd);
+            curl_easy_cleanup(curl);
+            return NULL;
+        }
         len += snprintf(url + len, url_cap - (size_t)len,
             "&ssid=%s&sspassword=%s", enc_user, enc_pass);
         curl_free(enc_user);
@@ -141,23 +285,34 @@ static char *build_search_url(const ss_client *client, const char *rom_name,
 
     if (ss_is_debug()) {
         char *enc_dbgpwd = curl_easy_escape(curl, SCREENSCRAPER_DEBUG_PASSWORD, 0);
+        if (!enc_dbgpwd) {
+            ss_set_last_error("failed to encode ScreenScraper debug credentials");
+            free(url);
+            curl_free(enc_romname);
+            curl_free(enc_devid);
+            curl_free(enc_devpwd);
+            curl_easy_cleanup(curl);
+            return NULL;
+        }
+
         len += snprintf(url + len, url_cap - (size_t)len,
             "&devdebugpassword=%s", enc_dbgpwd);
         curl_free(enc_dbgpwd);
 
-        if (SCREENSCRAPER_FORCE_LEVEL[0])
+        if (SCREENSCRAPER_FORCE_LEVEL[0]) {
             len += snprintf(url + len, url_cap - (size_t)len,
                 "&forcelevel=%s", SCREENSCRAPER_FORCE_LEVEL);
-        if (SCREENSCRAPER_FORCE_UPDATE[0])
+        }
+        if (SCREENSCRAPER_FORCE_UPDATE[0]) {
             snprintf(url + len, url_cap - (size_t)len,
                 "&forceupdate=%s", SCREENSCRAPER_FORCE_UPDATE);
+        }
     }
 
     curl_free(enc_romname);
     curl_free(enc_devid);
     curl_free(enc_devpwd);
     curl_easy_cleanup(curl);
-
     return url;
 }
 
@@ -171,11 +326,9 @@ static int resolve_media(cJSON *medias, char **media_types, int type_count,
         return -1;
 
     for (int t = 0; t < type_count; t++) {
-        /* Collect candidates for this media type */
         int media_count = cJSON_GetArraySize(medias);
         cJSON *first_match = NULL;
 
-        /* Try preferred regions first */
         for (int r = 0; r < region_count; r++) {
             for (int m = 0; m < media_count; m++) {
                 cJSON *media = cJSON_GetArrayItem(medias, m);
@@ -198,7 +351,6 @@ static int resolve_media(cJSON *medias, char **media_types, int type_count,
             }
         }
 
-        /* No region match — use first candidate for this type */
         if (first_match) {
             cJSON *murl = cJSON_GetObjectItem(first_match, "url");
             cJSON *mfmt = cJSON_GetObjectItem(first_match, "format");
@@ -222,8 +374,8 @@ static void resolve_game_name(cJSON *names, char **region_prio, int region_count
     }
 
     for (int r = 0; r < region_count; r++) {
-        int n = cJSON_GetArraySize(names);
-        for (int i = 0; i < n; i++) {
+        int count = cJSON_GetArraySize(names);
+        for (int i = 0; i < count; i++) {
             cJSON *entry = cJSON_GetArrayItem(names, i);
             cJSON *region = cJSON_GetObjectItem(entry, "region");
             cJSON *text = cJSON_GetObjectItem(entry, "text");
@@ -235,7 +387,6 @@ static void resolve_game_name(cJSON *names, char **region_prio, int region_count
         }
     }
 
-    /* Fallback: first name */
     cJSON *first = cJSON_GetArrayItem(names, 0);
     cJSON *text = cJSON_GetObjectItem(first, "text");
     if (cJSON_IsString(text))
@@ -257,6 +408,16 @@ static const char *http_status_error(int code) {
     }
 }
 
+static bool is_fatal_search_error(const char *message) {
+    if (!message)
+        return false;
+    return strstr(message, "Thread limit reached") != NULL ||
+           strstr(message, "Daily quota exceeded") != NULL ||
+           strstr(message, "Too many unrecognized ROMs") != NULL ||
+           strstr(message, "temporarily closed") != NULL ||
+           strstr(message, "blacklisted") != NULL;
+}
+
 /* ── ROM search ───────────────────────────────────────────── */
 
 static int search_rom_request(const ss_client *client, const char *rom_name,
@@ -265,72 +426,82 @@ static int search_rom_request(const ss_client *client, const char *rom_name,
                               char **region_prio, int region_count,
                               ss_result *result) {
     char *url = build_search_url(client, rom_name, md5_hash, file_size, system_id);
-    if (!url) return -1;
+    if (!url)
+        return -1;
 
     curl_buffer buf;
-    int http_code = http_get(url, SS_USER_AGENT, &buf, 2);
+    int http_code = http_get(client, url, SS_USER_AGENT, &buf, 2, NULL, 0);
     free(url);
 
+    if (http_code == -2)
+        return -2;
     if (http_code < 0) {
+        if (!ss_last_error_message())
+            ss_set_last_error("ScreenScraper request failed");
         free(buf.data);
         return -1;
     }
 
-    /* 404 = not found */
     if (http_code == 404) {
         free(buf.data);
         return 1;
     }
 
-    /* Check for error status codes */
     if (http_code >= 400) {
         const char *msg = http_status_error(http_code);
         if (msg)
-            fprintf(stderr, "screenscraper: %s\n", msg);
+            ss_set_last_error("%s", msg);
         else
-            fprintf(stderr, "screenscraper: unexpected HTTP %d\n", http_code);
+            ss_set_last_error("ScreenScraper returned HTTP %d", http_code);
         free(buf.data);
         return -1;
     }
 
     if (!buf.data || buf.size == 0) {
+        ss_set_last_error("ScreenScraper returned an empty response");
         free(buf.data);
         return -1;
     }
 
     cJSON *json = cJSON_Parse(buf.data);
     free(buf.data);
-    if (!json) return -1;
+    if (!json) {
+        ss_set_last_error("Failed to parse ScreenScraper response");
+        return -1;
+    }
 
-    /* Navigate JSON: response.jeu */
     cJSON *response = cJSON_GetObjectItem(json, "response");
-    if (!response) { cJSON_Delete(json); return -1; }
+    if (!response) {
+        cJSON_Delete(json);
+        ss_set_last_error("ScreenScraper response is missing 'response'");
+        return -1;
+    }
 
     cJSON *jeu = cJSON_GetObjectItem(response, "jeu");
-    if (!jeu) { cJSON_Delete(json); return 1; } /* not found */
+    if (!jeu) {
+        cJSON_Delete(json);
+        return 1;
+    }
 
     cJSON *game_id = cJSON_GetObjectItem(jeu, "id");
     if (!game_id || !cJSON_IsString(game_id) || game_id->valuestring[0] == '\0') {
         cJSON_Delete(json);
-        return 1; /* not found */
+        return 1;
     }
 
-    /* Resolve game name */
     cJSON *names = cJSON_GetObjectItem(jeu, "noms");
     resolve_game_name(names, region_prio, region_count,
                       result->game_name, sizeof(result->game_name));
 
-    /* Resolve media */
     cJSON *medias = cJSON_GetObjectItem(jeu, "medias");
     if (resolve_media(medias, artwork_types, artwork_count,
                       region_prio, region_count,
                       result->media_url, sizeof(result->media_url),
                       result->media_format, sizeof(result->media_format)) != 0) {
         cJSON_Delete(json);
-        return 1; /* found game but no matching media */
+        return 1;
     }
 
-    /* User stats */
     cJSON *ssuser = cJSON_GetObjectItem(response, "ssuser");
     if (ssuser) {
         cJSON *rt = cJSON_GetObjectItem(ssuser, "requeststoday");
@@ -349,6 +520,7 @@ int ss_search_rom(const ss_client *client, const rom_file *rom, int system_id,
                   char **artwork_types, int artwork_count,
                   char **region_prio, int region_count,
                   ss_result *result) {
+    ss_clear_last_error();
     memset(result, 0, sizeof(*result));
 
     char md5_hash[33] = {0};
@@ -362,8 +534,7 @@ int ss_search_rom(const ss_client *client, const rom_file *rom, int system_id,
                                  artwork_types, artwork_count,
                                  region_prio, region_count, result);
 
-    /* If hash lookup returned no results, retry without hash */
-    if (ret == 1 && md5_hash[0]) {
+    if (ret == 1 && md5_hash[0] != '\0') {
         ret = search_rom_request(client, rom->name, "", 0, system_id,
                                  artwork_types, artwork_count,
                                  region_prio, region_count, result);
@@ -374,74 +545,108 @@ int ss_search_rom(const ss_client *client, const rom_file *rom, int system_id,
 
 /* ── Media download ───────────────────────────────────────── */
 
+static void ensure_parent_dir(const char *path) {
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char *slash = strrchr(dir, '/');
+    if (!slash)
+        return;
+
+    *slash = '\0';
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s", dir);
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            mkdir(tmp, 0755);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, 0755);
+}
+
+static bool url_has_jpeg_suffix(const char *media_url) {
+    const char *last_dot = strrchr(media_url, '.');
+    if (!last_dot)
+        return false;
+    return strcasecmp(last_dot, ".jpg") == 0 || strcasecmp(last_dot, ".jpeg") == 0;
+}
+
 int ss_download_media(const ss_client *client, const char *media_url,
                       const char *dest_path) {
-    (void)client;
+    ss_clear_last_error();
 
     curl_buffer buf;
-    int http_code = http_get(media_url, SS_USER_AGENT, &buf, 2);
+    char content_type[128];
+    int http_code = http_get(client, media_url, SS_USER_AGENT, &buf, 2,
+                             content_type, sizeof(content_type));
+    if (http_code == -2)
+        return -2;
     if (http_code != 200) {
         free(buf.data);
+        if (http_code < 0 && ss_last_error_message())
+            return -1;
+        ss_set_last_error("Media download returned HTTP %d", http_code);
         return -1;
     }
 
-    /* Ensure parent directory exists */
-    char dir[PATH_MAX];
-    snprintf(dir, sizeof(dir), "%s", dest_path);
-    char *slash = strrchr(dir, '/');
-    if (slash) {
-        *slash = '\0';
-        char tmp[PATH_MAX];
-        snprintf(tmp, sizeof(tmp), "%s", dir);
-        for (char *p = tmp + 1; *p; p++) {
-            if (*p == '/') {
-                *p = '\0';
-                mkdir(tmp, 0755);
-                *p = '/';
-            }
-        }
-        mkdir(tmp, 0755);
-    }
+    ensure_parent_dir(dest_path);
 
-    /* Write to temp file first */
     char tmp_path[PATH_MAX];
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", dest_path);
 
-    bool is_jpeg = (strstr(media_url, ".jpg") != NULL) ||
-                   (strstr(media_url, ".jpeg") != NULL);
+    bool is_jpeg = strstr(content_type, "jpeg") != NULL || url_has_jpeg_suffix(media_url);
 
     if (is_jpeg) {
-        /* Convert JPEG to PNG using SDL2_image */
         SDL_RWops *rw = SDL_RWFromMem(buf.data, (int)buf.size);
-        if (!rw) { free(buf.data); return -1; }
+        if (!rw) {
+            free(buf.data);
+            ss_set_last_error("Failed to create SDL buffer for JPEG conversion");
+            return -1;
+        }
 
         SDL_Surface *surface = IMG_Load_RW(rw, 1);
         free(buf.data);
-        if (!surface) return -1;
+        if (!surface) {
+            ss_set_last_error("JPEG decode failed: %s", IMG_GetError());
+            return -1;
+        }
 
         if (IMG_SavePNG(surface, tmp_path) != 0) {
             SDL_FreeSurface(surface);
+            ss_set_last_error("PNG conversion failed: %s", IMG_GetError());
+            unlink(tmp_path);
             return -1;
         }
+
         SDL_FreeSurface(surface);
     } else {
-        /* Write raw data */
         FILE *f = fopen(tmp_path, "wb");
-        if (!f) { free(buf.data); return -1; }
+        if (!f) {
+            free(buf.data);
+            ss_set_last_error("Failed to create temporary media file");
+            return -1;
+        }
+
         size_t written = fwrite(buf.data, 1, buf.size, f);
-        fclose(f);
         free(buf.data);
-        if (written != buf.size) {
+        int write_ok = (written == buf.size);
+        int flush_ok = (fflush(f) == 0);
+        int sync_ok = flush_ok && (fsync(fileno(f)) == 0);
+        int close_ok = (fclose(f) == 0);
+        if (!write_ok || !flush_ok || !sync_ok || !close_ok) {
             unlink(tmp_path);
+            ss_set_last_error("Failed to write media file");
             return -1;
         }
     }
 
-    /* Atomic rename */
     if (rename(tmp_path, dest_path) != 0) {
         unlink(tmp_path);
+        ss_set_last_error("Failed to finalize media file");
         return -1;
     }
+
     return 0;
 }
 
@@ -452,6 +657,7 @@ void format_eta(double seconds, char *buf, size_t buflen) {
         snprintf(buf, buflen, "0s");
         return;
     }
+
     int h = (int)(seconds / 3600);
     int m = ((int)(seconds / 60)) % 60;
     int s = ((int)seconds) % 60;
@@ -466,83 +672,34 @@ void format_eta(double seconds, char *buf, size_t buflen) {
 /* ── Multithreaded console scraping ───────────────────────── */
 
 typedef struct {
-    const ss_client *client;
-    const rom_file *rom;
     const console_dir *console;
+    const rom_file *roms;
+    int rom_count;
+    const ss_client *client;
     int system_id;
     char **artwork_types;
     int artwork_count;
     char **region_prio;
     int region_count;
-    scrape_summary *summary;
-    pthread_mutex_t *mu;
-    atomic_int *completed;
     atomic_int *interrupt_signal;
-    atomic_int *aborted;
-    /* EMA stats (protected by mu) */
-    long *avg_rom_ns;
-    long *last_ns;
-    atomic_int *stats_req_today;
-    atomic_int *stats_max_req;
+
+    scrape_summary summary;
+    pthread_mutex_t mu;
+    atomic_int next_index;
+    atomic_int completed;
+    atomic_int abort_requested;
+    atomic_int stats_threads;
+    atomic_int stats_req_today;
+    atomic_int stats_max_req;
+    long avg_rom_ns;
+    long last_ns;
+    char fatal_message[256];
+} scrape_state;
+
+typedef struct {
+    scrape_state *state;
 } worker_arg;
 
-static void *scrape_worker(void *arg) {
-    worker_arg *w = (worker_arg *)arg;
-
-    if (atomic_load(w->aborted) || atomic_load(w->interrupt_signal))
-        goto done;
-
-    ss_result result;
-    int ret = ss_search_rom(w->client, w->rom, w->system_id,
-                            w->artwork_types, w->artwork_count,
-                            w->region_prio, w->region_count, &result);
-
-    pthread_mutex_lock(w->mu);
-    if (ret == 0) {
-        /* Download the media */
-        char dest[PATH_MAX];
-        artwork_src_path(w->rom->path, w->rom->display, dest, sizeof(dest));
-
-        if (ss_download_media(w->client, result.media_url, dest) == 0)
-            w->summary->found++;
-        else
-            w->summary->errors++;
-
-        atomic_store(w->stats_req_today, result.requests_today);
-        atomic_store(w->stats_max_req, result.max_requests);
-
-        if (result.max_requests > 0 && result.requests_today >= result.max_requests) {
-            atomic_store(w->aborted, 1);
-            fprintf(stderr, "screenscraper: quota exceeded (%d/%d)\n",
-                    result.requests_today, result.max_requests);
-        }
-    } else if (ret == 1) {
-        w->summary->not_found++;
-    } else {
-        w->summary->errors++;
-    }
-
-    /* Update EMA */
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    long now_ns = now.tv_sec * 1000000000L + now.tv_nsec;
-    long prev_ns = *w->last_ns;
-    if (prev_ns > 0) {
-        long elapsed = now_ns - prev_ns;
-        long prev_avg = *w->avg_rom_ns;
-        long new_avg = (long)(0.3 * (double)elapsed + 0.7 * (double)prev_avg);
-        if (new_avg > 0) *w->avg_rom_ns = new_avg;
-    }
-    *w->last_ns = now_ns;
-    pthread_mutex_unlock(w->mu);
-
-done:
-    atomic_fetch_add(w->completed, 1);
-    free(w);
-    return NULL;
-}
-
-/* HUD thread context and function */
 typedef struct {
     atomic_int *completed;
     int scrape_total;
@@ -550,37 +707,166 @@ typedef struct {
     atomic_int *stats_threads;
     atomic_int *stats_req_today;
     atomic_int *stats_max_req;
-    long *avg_rom_ns;       /* protected by mu */
-    long *last_ns;          /* protected by mu */
+    long *avg_rom_ns;
+    long *last_ns;
     pthread_mutex_t *mu;
     atomic_int *stop;
     message_fn set_message;
     progress_fn set_progress;
 } hud_ctx;
 
+static void set_fatal_message_locked(scrape_state *state, const char *message) {
+    if (message && message[0] != '\0' && state->fatal_message[0] == '\0') {
+        snprintf(state->fatal_message, sizeof(state->fatal_message), "%s", message);
+    }
+    atomic_store(&state->abort_requested, 1);
+}
+
+static void record_completion_locked(scrape_state *state, int found_delta,
+                                     int not_found_delta, int error_delta,
+                                     const ss_result *result,
+                                     const char *fatal_message) {
+    long now_ns = monotonic_now_ns();
+
+    pthread_mutex_lock(&state->mu);
+    state->summary.found += found_delta;
+    state->summary.not_found += not_found_delta;
+    state->summary.errors += error_delta;
+
+    if (result) {
+        atomic_store(&state->stats_req_today, result->requests_today);
+        atomic_store(&state->stats_max_req, result->max_requests);
+        if (result->max_requests > 0 && result->requests_today >= result->max_requests) {
+            char quota_message[256];
+            snprintf(quota_message, sizeof(quota_message),
+                     "Daily quota exceeded (%d/%d).",
+                     result->requests_today, result->max_requests);
+            set_fatal_message_locked(state, quota_message);
+        }
+    }
+
+    if (fatal_message && fatal_message[0] != '\0')
+        set_fatal_message_locked(state, fatal_message);
+
+    if (state->last_ns > 0) {
+        long elapsed = now_ns - state->last_ns;
+        if (elapsed > 0) {
+            if (state->avg_rom_ns > 0) {
+                state->avg_rom_ns =
+                    (long)(0.3 * (double)elapsed + 0.7 * (double)state->avg_rom_ns);
+            } else {
+                state->avg_rom_ns = elapsed;
+            }
+        }
+    }
+    state->last_ns = now_ns;
+    pthread_mutex_unlock(&state->mu);
+
+    atomic_fetch_add(&state->completed, 1);
+}
+
+/* Returns 0 to continue, -1 for fatal error, -2 for cancellation. */
+static int process_one_rom(scrape_state *state, const rom_file *rom, bool first_phase,
+                           int *max_threads_out) {
+    int found_delta = 0;
+    int not_found_delta = 0;
+    int error_delta = 0;
+    char fatal_message[256] = "";
+    bool cancelled = false;
+    bool have_result = false;
+    ss_result result;
+
+    int search_ret = ss_search_rom(state->client, rom, state->system_id,
+                                   state->artwork_types, state->artwork_count,
+                                   state->region_prio, state->region_count, &result);
+    if (search_ret == 0) {
+        char dest[PATH_MAX];
+        have_result = true;
+        if (max_threads_out && result.max_threads > 1)
+            *max_threads_out = result.max_threads;
+
+        artwork_src_path(rom->path, rom->display, dest, sizeof(dest));
+        int download_ret = ss_download_media(state->client, result.media_url, dest);
+        if (download_ret == 0) {
+            found_delta = 1;
+        } else if (download_ret == -2) {
+            cancelled = true;
+            have_result = false;
+        } else {
+            error_delta = 1;
+            have_result = false;
+            if (first_phase) {
+                const char *message = ss_last_error_message();
+                snprintf(fatal_message, sizeof(fatal_message),
+                         "Failed to download artwork for %s: %s",
+                         rom->display,
+                         message ? message : "unknown error");
+            }
+        }
+    } else if (search_ret == 1) {
+        not_found_delta = 1;
+    } else if (search_ret == -2) {
+        cancelled = true;
+    } else {
+        const char *message = ss_last_error_message();
+        error_delta = 1;
+        if (first_phase || is_fatal_search_error(message)) {
+            snprintf(fatal_message, sizeof(fatal_message), "%s",
+                     message ? message : "ScreenScraper request failed");
+        }
+    }
+
+    record_completion_locked(state, found_delta, not_found_delta, error_delta,
+                             have_result ? &result : NULL, fatal_message);
+
+    if (fatal_message[0] != '\0' || (have_result && result.max_requests > 0 &&
+        result.requests_today >= result.max_requests)) {
+        return -1;
+    }
+    if (cancelled)
+        return -2;
+    return 0;
+}
+
+static void *scrape_worker(void *arg) {
+    worker_arg *worker = (worker_arg *)arg;
+    scrape_state *state = worker->state;
+
+    for (;;) {
+        if (atomic_load(&state->abort_requested) || is_cancel_requested(state->interrupt_signal))
+            break;
+
+        int index = atomic_fetch_add(&state->next_index, 1);
+        if (index >= state->rom_count)
+            break;
+
+        int result = process_one_rom(state, &state->roms[index], false, NULL);
+        if (result == -1 || result == -2)
+            continue;
+    }
+
+    return NULL;
+}
+
 static void *hud_thread_fn(void *arg) {
-    hud_ctx *h = (hud_ctx *)arg;
-    while (!atomic_load(h->stop)) {
-        int done = atomic_load(h->completed);
-        int remaining = h->scrape_total - done;
-        int threads = atomic_load(h->stats_threads);
-        int req_today = atomic_load(h->stats_req_today);
-        int max_req = atomic_load(h->stats_max_req);
+    hud_ctx *hud = (hud_ctx *)arg;
+    while (!atomic_load(hud->stop)) {
+        int done = atomic_load(hud->completed);
+        int remaining = hud->scrape_total - done;
+        int threads = atomic_load(hud->stats_threads);
+        int req_today = atomic_load(hud->stats_req_today);
+        int max_req = atomic_load(hud->stats_max_req);
 
         char eta_str[64];
-        pthread_mutex_lock(h->mu);
-        long avg_ns = *h->avg_rom_ns;
-        long last = *h->last_ns;
-        pthread_mutex_unlock(h->mu);
+        pthread_mutex_lock(hud->mu);
+        long avg_ns = *hud->avg_rom_ns;
+        long last_ns = *hud->last_ns;
+        pthread_mutex_unlock(hud->mu);
 
         if (remaining <= 0) {
             snprintf(eta_str, sizeof(eta_str), "finishing...");
         } else if (avg_ns > 0) {
-            struct timespec tnow;
-            clock_gettime(CLOCK_MONOTONIC, &tnow);
-            long now_ns2 = tnow.tv_sec * 1000000000L + tnow.tv_nsec;
-            long time_since = now_ns2 - last;
-            long eta_ns = (long)remaining * avg_ns - time_since;
+            long eta_ns = (long)remaining * avg_ns - (monotonic_now_ns() - last_ns);
             if (eta_ns < 1000000000L)
                 snprintf(eta_str, sizeof(eta_str), "finishing...");
             else
@@ -589,44 +875,66 @@ static void *hud_thread_fn(void *arg) {
             snprintf(eta_str, sizeof(eta_str), "calculating...");
         }
 
-        char msg[512];
-        int len = snprintf(msg, sizeof(msg),
-            "ROMs left: %d / %d\nThreads: %d - ETA: %s",
-            remaining, h->scrape_total, threads, eta_str);
-        if (max_req > 0)
-            snprintf(msg + len, sizeof(msg) - (size_t)len,
-                "\nQuota: %d / %d", req_today, max_req);
+        if (hud->set_message) {
+            char message[512];
+            int len = snprintf(message, sizeof(message),
+                               "ROMs left: %d / %d\nThreads: %d - ETA: %s",
+                               remaining, hud->scrape_total, threads, eta_str);
+            if (max_req > 0) {
+                snprintf(message + len, sizeof(message) - (size_t)len,
+                         "\nQuota: %d / %d", req_today, max_req);
+            }
+            hud->set_message(message);
+        }
 
-        if (h->set_message) h->set_message(msg);
-        if (h->set_progress)
-            h->set_progress((float)done / (float)h->rom_total);
+        if (hud->set_progress) {
+            hud->set_progress((float)done / (float)hud->rom_total);
+        }
 
         usleep(333000);
     }
     return NULL;
 }
 
-scrape_summary scrape_console(const console_dir *console, bool missing_only,
-                              const app_settings *settings,
-                              atomic_int *interrupt_signal,
-                              progress_fn set_progress,
-                              message_fn set_message) {
-    scrape_summary summary = {0};
+static run_result make_run_result(run_status status, scrape_summary summary,
+                                  const char *error) {
+    run_result result;
+    result.status = status;
+    result.summary = summary;
+    result.error[0] = '\0';
+    if (error && error[0] != '\0')
+        snprintf(result.error, sizeof(result.error), "%s", error);
+    return result;
+}
 
+run_result scrape_console(const console_dir *console, bool missing_only,
+                          const app_settings *settings,
+                          atomic_int *interrupt_signal,
+                          progress_fn set_progress,
+                          message_fn set_message) {
     rom_file *roms = NULL;
     int rom_count = scan_roms(console->path, settings->show_hidden, &roms);
-
-    int sys_id = ss_platform_id(console->tag);
-    if (sys_id < 0) {
-        free(roms);
-        return summary;
+    if (rom_count < 0) {
+        return make_run_result(RUN_ERROR, (scrape_summary){0},
+                               "Could not read ROM files for this system.");
     }
 
-    /* Filter ROMs if missing-only mode */
+    int system_id = ss_platform_id(console->tag);
+    if (system_id < 0) {
+        free(roms);
+        return make_run_result(RUN_ERROR, (scrape_summary){0},
+                               "This system does not have a ScreenScraper mapping.");
+    }
+
     rom_file *to_scrape = malloc(sizeof(rom_file) * (size_t)rom_count);
+    if (!to_scrape) {
+        free(roms);
+        return make_run_result(RUN_ERROR, (scrape_summary){0},
+                               "Out of memory while preparing the scrape.");
+    }
+
     int scrape_count = 0;
     int pre_existing = 0;
-
     for (int i = 0; i < rom_count; i++) {
         if (missing_only && artwork_exists(roms[i].path, roms[i].display)) {
             pre_existing++;
@@ -635,164 +943,161 @@ scrape_summary scrape_console(const console_dir *console, bool missing_only,
         to_scrape[scrape_count++] = roms[i];
     }
 
-    summary.total = rom_count;
-    summary.found = pre_existing;
+    scrape_state state;
+    memset(&state, 0, sizeof(state));
+    state.console = console;
+    state.roms = to_scrape;
+    state.rom_count = scrape_count;
+    state.system_id = system_id;
+    state.interrupt_signal = interrupt_signal;
+    state.summary.total = rom_count;
+    state.summary.found = pre_existing;
+    pthread_mutex_init(&state.mu, NULL);
+    atomic_init(&state.next_index, 1);
+    atomic_init(&state.completed, 0);
+    atomic_init(&state.abort_requested, 0);
+    atomic_init(&state.stats_threads, 1);
+    atomic_init(&state.stats_req_today, 0);
+    atomic_init(&state.stats_max_req, 0);
+    state.last_ns = monotonic_now_ns();
 
-    if (scrape_count == 0) {
-        if (set_progress) set_progress(1.0f);
-        free(roms);
-        free(to_scrape);
-        return summary;
-    }
-
-    /* Build client and priority lists */
     ss_client client = {0};
     snprintf(client.username, sizeof(client.username), "%s", settings->ss_username);
     snprintf(client.password, sizeof(client.password), "%s", settings->ss_password);
+    client.interrupt_signal = interrupt_signal;
+    state.client = &client;
 
-    int artwork_count = 0;
-    char **artwork_types = build_artwork_types(settings, &artwork_count);
-    int region_count = 0;
-    char **region_prio = build_region_types(settings, &region_count);
+    state.artwork_types = build_artwork_types(settings, &state.artwork_count);
+    state.region_prio = build_region_types(settings, &state.region_count);
+    if (!state.artwork_types || !state.region_prio) {
+        for (int i = 0; i < state.artwork_count; i++) free(state.artwork_types[i]);
+        free(state.artwork_types);
+        for (int i = 0; i < state.region_count; i++) free(state.region_prio[i]);
+        free(state.region_prio);
+        free(to_scrape);
+        free(roms);
+        pthread_mutex_destroy(&state.mu);
+        return make_run_result(RUN_ERROR, state.summary,
+                               "Out of memory while preparing scrape settings.");
+    }
 
-    /* Shared state */
-    pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
-    atomic_int completed = 0;
-    atomic_int aborted = 0;
-    long avg_rom_ns = 0;
-    long last_ns = 0;
-    atomic_int stats_threads = 1;
-    atomic_int stats_req_today = 0;
-    atomic_int stats_max_req = 0;
-
-    struct timespec start;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-
-    /* Phase 1: Scrape first ROM to learn maxthreads */
-    ss_result first_result;
-    int first_ret = ss_search_rom(&client, &to_scrape[0], sys_id,
-                                  artwork_types, artwork_count,
-                                  region_prio, region_count, &first_result);
+    if (scrape_count == 0) {
+        if (set_progress)
+            set_progress(1.0f);
+        run_result result = make_run_result(RUN_OK, state.summary, NULL);
+        for (int i = 0; i < state.artwork_count; i++) free(state.artwork_types[i]);
+        free(state.artwork_types);
+        for (int i = 0; i < state.region_count; i++) free(state.region_prio[i]);
+        free(state.region_prio);
+        free(to_scrape);
+        free(roms);
+        pthread_mutex_destroy(&state.mu);
+        return result;
+    }
 
     int max_threads = 1;
-    pthread_mutex_lock(&mu);
-    if (first_ret == 0) {
-        char dest[PATH_MAX];
-        artwork_src_path(to_scrape[0].path, to_scrape[0].display, dest, sizeof(dest));
-        if (ss_download_media(&client, first_result.media_url, dest) == 0)
-            summary.found++;
-        else
-            summary.errors++;
+    int first_result = process_one_rom(&state, &to_scrape[0], true, &max_threads);
+    atomic_store(&state.stats_threads, max_threads);
 
-        if (first_result.max_threads > 1)
-            max_threads = first_result.max_threads;
-        atomic_store(&stats_threads, max_threads);
-        atomic_store(&stats_req_today, first_result.requests_today);
-        atomic_store(&stats_max_req, first_result.max_requests);
-    } else if (first_ret == 1) {
-        summary.not_found++;
-    } else {
-        summary.errors++;
+    if (set_progress)
+        set_progress((float)atomic_load(&state.completed) / (float)rom_count);
+
+    if (state.fatal_message[0] != '\0') {
+        run_result result = make_run_result(RUN_ERROR, state.summary, state.fatal_message);
+        for (int i = 0; i < state.artwork_count; i++) free(state.artwork_types[i]);
+        free(state.artwork_types);
+        for (int i = 0; i < state.region_count; i++) free(state.region_prio[i]);
+        free(state.region_prio);
+        free(to_scrape);
+        free(roms);
+        pthread_mutex_destroy(&state.mu);
+        return result;
     }
-    pthread_mutex_unlock(&mu);
 
-    /* Seed EMA */
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    long seed_ns = (now.tv_sec - start.tv_sec) * 1000000000L + (now.tv_nsec - start.tv_nsec);
-    avg_rom_ns = seed_ns;
-    last_ns = now.tv_sec * 1000000000L + now.tv_nsec;
-
-    atomic_store(&completed, 1);
-    if (set_progress) set_progress((float)1 / (float)rom_count);
-
-    /* HUD update thread */
-    atomic_int hud_stop = 0;
-    hud_ctx hud = {
-        .completed = &completed,
-        .scrape_total = scrape_count,
-        .rom_total = rom_count,
-        .stats_threads = &stats_threads,
-        .stats_req_today = &stats_req_today,
-        .stats_max_req = &stats_max_req,
-        .avg_rom_ns = &avg_rom_ns,
-        .last_ns = &last_ns,
-        .mu = &mu,
-        .stop = &hud_stop,
-        .set_message = set_message,
-        .set_progress = set_progress,
-    };
-
-    pthread_t hud_thread;
-    pthread_create(&hud_thread, NULL, hud_thread_fn, &hud);
+    if (first_result == -2 || is_cancel_requested(interrupt_signal)) {
+        run_result result = make_run_result(RUN_CANCELLED, state.summary, NULL);
+        for (int i = 0; i < state.artwork_count; i++) free(state.artwork_types[i]);
+        free(state.artwork_types);
+        for (int i = 0; i < state.region_count; i++) free(state.region_prio[i]);
+        free(state.region_prio);
+        free(to_scrape);
+        free(roms);
+        pthread_mutex_destroy(&state.mu);
+        return result;
+    }
 
     if (scrape_count > 1) {
-        /* Phase 2: Scrape remaining ROMs with thread pool.
-         * Use detached threads with a simple slot-counting approach
-         * instead of pthread_tryjoin_np (not available on macOS). */
-        atomic_int active_count = 0;
+        atomic_int hud_stop;
+        atomic_init(&hud_stop, 0);
+        hud_ctx hud = {
+            .completed = &state.completed,
+            .scrape_total = scrape_count,
+            .rom_total = rom_count,
+            .stats_threads = &state.stats_threads,
+            .stats_req_today = &state.stats_req_today,
+            .stats_max_req = &state.stats_max_req,
+            .avg_rom_ns = &state.avg_rom_ns,
+            .last_ns = &state.last_ns,
+            .mu = &state.mu,
+            .stop = &hud_stop,
+            .set_message = set_message,
+            .set_progress = set_progress,
+        };
 
-        for (int i = 1; i < scrape_count; i++) {
-            if (atomic_load(&aborted) || atomic_load(interrupt_signal))
-                break;
+        pthread_t hud_thread;
+        int hud_started = (pthread_create(&hud_thread, NULL, hud_thread_fn, &hud) == 0);
+        if (!hud_started)
+            set_fatal_message_locked(&state, "Failed to start scrape progress updates.");
 
-            /* Wait for a slot */
-            while (atomic_load(&active_count) >= max_threads) {
-                usleep(10000);
-                if (atomic_load(&aborted) || atomic_load(interrupt_signal))
-                    break;
+        pthread_t *workers = calloc((size_t)max_threads, sizeof(pthread_t));
+        worker_arg worker = {.state = &state};
+
+        if (!workers) {
+            if (hud_started) {
+                atomic_store(&hud_stop, 1);
+                pthread_join(hud_thread, NULL);
             }
-            if (atomic_load(&aborted) || atomic_load(interrupt_signal))
-                break;
+            set_fatal_message_locked(&state, "Out of memory while starting scrape workers.");
+        } else {
+            int worker_count = 0;
+            for (int i = 0; i < max_threads; i++) {
+                if (pthread_create(&workers[i], NULL, scrape_worker, &worker) == 0) {
+                    worker_count++;
+                } else {
+                    set_fatal_message_locked(&state, "Failed to start scrape worker threads.");
+                    break;
+                }
+            }
 
-            worker_arg *w = malloc(sizeof(worker_arg));
-            w->client = &client;
-            w->rom = &to_scrape[i];
-            w->console = console;
-            w->system_id = sys_id;
-            w->artwork_types = artwork_types;
-            w->artwork_count = artwork_count;
-            w->region_prio = region_prio;
-            w->region_count = region_count;
-            w->summary = &summary;
-            w->mu = &mu;
-            w->completed = &completed;
-            w->interrupt_signal = interrupt_signal;
-            w->aborted = &aborted;
-            w->avg_rom_ns = &avg_rom_ns;
-            w->last_ns = &last_ns;
-            w->stats_req_today = &stats_req_today;
-            w->stats_max_req = &stats_max_req;
+            for (int i = 0; i < worker_count; i++)
+                pthread_join(workers[i], NULL);
 
-            atomic_fetch_add(&active_count, 1);
-
-            pthread_t thread;
-            pthread_attr_t attr;
-            pthread_attr_init(&attr);
-            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-            pthread_create(&thread, &attr, scrape_worker, w);
-            pthread_attr_destroy(&attr);
-        }
-
-        /* Wait for all workers to complete */
-        while (atomic_load(&completed) < scrape_count) {
-            usleep(50000);
+            free(workers);
+            if (hud_started) {
+                atomic_store(&hud_stop, 1);
+                pthread_join(hud_thread, NULL);
+            }
         }
     }
 
-    /* Stop HUD */
-    atomic_store(&hud_stop, 1);
-    pthread_join(hud_thread, NULL);
+    if (set_progress && state.fatal_message[0] == '\0')
+        set_progress(1.0f);
 
-    if (set_progress) set_progress(1.0f);
+    run_result result;
+    if (state.fatal_message[0] != '\0') {
+        result = make_run_result(RUN_ERROR, state.summary, state.fatal_message);
+    } else if (is_cancel_requested(interrupt_signal)) {
+        result = make_run_result(RUN_CANCELLED, state.summary, NULL);
+    } else {
+        result = make_run_result(RUN_OK, state.summary, NULL);
+    }
 
-    /* Cleanup */
-    for (int i = 0; i < artwork_count; i++) free(artwork_types[i]);
-    free(artwork_types);
-    for (int i = 0; i < region_count; i++) free(region_prio[i]);
-    free(region_prio);
-    free(roms);
+    for (int i = 0; i < state.artwork_count; i++) free(state.artwork_types[i]);
+    free(state.artwork_types);
+    for (int i = 0; i < state.region_count; i++) free(state.region_prio[i]);
+    free(state.region_prio);
     free(to_scrape);
-
-    return summary;
+    free(roms);
+    pthread_mutex_destroy(&state.mu);
+    return result;
 }

@@ -56,6 +56,11 @@ native: mac
 run-native: run-mac
 all: tg5040 tg5050 my355
 
+# ── Submodule auto-init ────────────────────────────────────
+
+$(APOSTROPHE_DIR)/include/apostrophe.h:
+	git submodule update --init
+
 # ── Credential checking ────────────────────────────────────
 
 check-credentials:
@@ -72,7 +77,7 @@ check-credentials:
 
 # ── Native macOS build ──────────────────────────────────────
 
-mac: check-credentials
+mac: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 	@mkdir -p $(BUILD_DIR)/mac
 	cc -std=gnu11 -O0 -g \
 		-DPLATFORM_MAC \
@@ -89,7 +94,7 @@ run-mac: mac
 
 # ── Docker cross-compilation ────────────────────────────────
 
-tg5040: check-credentials
+tg5040: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 	@mkdir -p $(BUILD_DIR)/tg5040
 	docker run --rm \
 		-v "$(CURDIR)":/workspace \
@@ -98,7 +103,7 @@ tg5040: check-credentials
 		make -C /workspace -f ports/tg5040/Makefile \
 			BUILD_DIR=/workspace/$(BUILD_DIR)/tg5040
 
-tg5050: check-credentials
+tg5050: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 	@mkdir -p $(BUILD_DIR)/tg5050
 	docker run --rm \
 		-v "$(CURDIR)":/workspace \
@@ -107,7 +112,7 @@ tg5050: check-credentials
 		make -C /workspace -f ports/tg5050/Makefile \
 			BUILD_DIR=/workspace/$(BUILD_DIR)/tg5050
 
-my355: check-credentials
+my355: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 	@mkdir -p $(BUILD_DIR)/my355
 	docker run --rm \
 		-v "$(CURDIR)":/workspace \

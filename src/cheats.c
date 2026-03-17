@@ -3,13 +3,13 @@
 
 #include <ctype.h>
 #include <dirent.h>
-#include <errno.h>
 #include <limits.h>
-#include <regex.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -25,12 +25,14 @@ const char *get_git_bin(void) {
 #else
     static char buf[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (len <= 0) return "git";
+    if (len <= 0)
+        return "git";
+
     buf[len] = '\0';
     char *slash = strrchr(buf, '/');
-    if (slash) *slash = '\0';
-    snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf),
-             "/resources/bin/git");
+    if (slash)
+        *slash = '\0';
+    snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "/resources/bin/git");
     return buf;
 #endif
 }
@@ -49,48 +51,48 @@ int check_git_available(void) {
     return 0;
 }
 
-/* ── CA certificate bundle ────────────────────────────────── */
+/* ── Result helpers ───────────────────────────────────────── */
 
-static const char *find_ca_certs(void) {
-    /* Common CA bundle paths on Linux/device */
-    static const char *paths[] = {
-        "/etc/ssl/certs/ca-certificates.crt",
-        "/etc/pki/tls/certs/ca-bundle.crt",
-        "/usr/share/ca-certificates/mozilla/",
-        NULL,
-    };
-    for (const char **p = paths; *p; p++) {
-        struct stat st;
-        if (stat(*p, &st) == 0)
-            return *p;
-    }
-    return NULL;
+static run_result make_run_result(run_status status, scrape_summary summary,
+                                  const char *error) {
+    run_result result;
+    result.status = status;
+    result.summary = summary;
+    result.error[0] = '\0';
+    if (error && error[0] != '\0')
+        snprintf(result.error, sizeof(result.error), "%s", error);
+    return result;
+}
+
+static run_result make_run_error(scrape_summary summary, const char *fmt, ...) {
+    run_result result;
+    va_list args;
+
+    result.status = RUN_ERROR;
+    result.summary = summary;
+    va_start(args, fmt);
+    vsnprintf(result.error, sizeof(result.error), fmt, args);
+    va_end(args);
+    return result;
 }
 
 /* ── Git command helpers ──────────────────────────────────── */
 
-typedef struct {
-    const char **argv;
-    int argc;
-    const char *cwd;
-} git_cmd;
-
-/* Build environment for git process */
 static char **build_git_env(void) {
-    /* Count existing env */
     extern char **environ;
     int count = 0;
-    for (char **e = environ; *e; e++) count++;
+    for (char **entry = environ; *entry; entry++)
+        count++;
 
-    /* Allocate space for existing + extras + NULL */
-    char **env = malloc(sizeof(char *) * (size_t)(count + 6));
+    char **env = malloc(sizeof(char *) * (size_t)(count + 4));
+    if (!env)
+        return NULL;
+
     int idx = 0;
-
     for (int i = 0; i < count; i++)
         env[idx++] = environ[i];
 
 #ifndef PLATFORM_MAC
-    /* Add LD_LIBRARY_PATH, GIT_EXEC_PATH, GIT_TEMPLATE_DIR */
     static char ld_path[PATH_MAX];
     static char exec_path[PATH_MAX];
     static char template_dir[] = "GIT_TEMPLATE_DIR=";
@@ -100,7 +102,8 @@ static char **build_git_env(void) {
     if (len > 0) {
         exe_dir[len] = '\0';
         char *slash = strrchr(exe_dir, '/');
-        if (slash) *slash = '\0';
+        if (slash)
+            *slash = '\0';
 
         snprintf(ld_path, sizeof(ld_path), "LD_LIBRARY_PATH=%s/resources/lib:%s",
                  exe_dir, getenv("LD_LIBRARY_PATH") ? getenv("LD_LIBRARY_PATH") : "");
@@ -110,14 +113,6 @@ static char **build_git_env(void) {
         env[idx++] = exec_path;
         env[idx++] = template_dir;
     }
-
-    /* Point git at CA certs */
-    static char ca_env[PATH_MAX];
-    const char *ca = find_ca_certs();
-    if (ca) {
-        snprintf(ca_env, sizeof(ca_env), "GIT_SSL_CAINFO=%s", ca);
-        env[idx++] = ca_env;
-    }
 #endif
 
     env[idx] = NULL;
@@ -126,14 +121,13 @@ static char **build_git_env(void) {
 
 /* ── Git process execution with streaming ─────────────────── */
 
-/* Remove stale lock files from a previous killed git process */
 static void remove_git_locks(void) {
     char repo[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
 
     char lock_paths[2][PATH_MAX];
-    snprintf(lock_paths[0], PATH_MAX, "%s/.git/index.lock", repo);
-    snprintf(lock_paths[1], PATH_MAX, "%s/.git/info/sparse-checkout.lock", repo);
+    snprintf(lock_paths[0], sizeof(lock_paths[0]), "%s/.git/index.lock", repo);
+    snprintf(lock_paths[1], sizeof(lock_paths[1]), "%s/.git/info/sparse-checkout.lock", repo);
 
     for (int i = 0; i < 2; i++) {
         if (unlink(lock_paths[i]) == 0)
@@ -141,33 +135,36 @@ static void remove_git_locks(void) {
     }
 }
 
-/* Parse "Receiving objects:  XX%" from git stderr */
 static float parse_git_progress(const char *line) {
-    const char *p = strstr(line, "Receiving objects:");
-    if (!p) return -1.0f;
-    p += strlen("Receiving objects:");
-    while (*p == ' ') p++;
-    int pct = atoi(p);
-    if (pct > 0 && pct <= 100)
+    const char *progress = strstr(line, "Receiving objects:");
+    if (!progress)
+        return -1.0f;
+
+    progress += strlen("Receiving objects:");
+    while (*progress == ' ')
+        progress++;
+
+    int pct = atoi(progress);
+    if (pct >= 0 && pct <= 100)
         return (float)pct / 100.0f;
     return -1.0f;
 }
 
-/* Run a git command with real-time progress parsing and interrupt support.
- * Returns 0 on success, -1 on error, -2 on interrupt. */
 static int run_git_streaming(const char **argv, const char *cwd,
-                              int *interrupt_signal,
-                              cheat_progress_fn set_progress) {
+                             int *interrupt_signal,
+                             cheat_progress_fn set_progress,
+                             float progress_scale,
+                             float progress_offset) {
     remove_git_locks();
 
-    /* Log the command */
     fprintf(stderr, "cheats: exec");
-    for (const char **a = argv; *a; a++)
-        fprintf(stderr, " %s", *a);
+    for (const char **arg = argv; *arg; arg++)
+        fprintf(stderr, " %s", *arg);
     fprintf(stderr, "\n");
 
     int pipe_fd[2];
-    if (pipe(pipe_fd) != 0) return -1;
+    if (pipe(pipe_fd) != 0)
+        return -1;
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -177,21 +174,21 @@ static int run_git_streaming(const char **argv, const char *cwd,
     }
 
     if (pid == 0) {
-        /* Child: redirect stderr to pipe */
         close(pipe_fd[0]);
         dup2(pipe_fd[1], STDERR_FILENO);
         close(pipe_fd[1]);
 
-        if (cwd) {
-            if (chdir(cwd) != 0) _exit(127);
-        }
+        if (cwd && chdir(cwd) != 0)
+            _exit(127);
 
         char **env = build_git_env();
+        if (!env)
+            _exit(127);
+
         execve(argv[0], (char *const *)argv, env);
         _exit(127);
     }
 
-    /* Parent: read stderr from pipe */
     close(pipe_fd[1]);
 
     char buf[4096];
@@ -199,35 +196,34 @@ static int run_git_streaming(const char **argv, const char *cwd,
     int killed = 0;
 
     while (1) {
-        /* Check interrupt every read */
         if (interrupt_signal && *interrupt_signal != 0 && !killed) {
             kill(pid, SIGKILL);
             killed = 1;
         }
 
         ssize_t n = read(pipe_fd[0], buf + buf_pos, sizeof(buf) - buf_pos - 1);
-        if (n <= 0) break;
+        if (n <= 0)
+            break;
+
         buf_pos += (size_t)n;
         buf[buf_pos] = '\0';
 
-        /* Process lines (split on \r or \n) */
         char *start = buf;
         for (char *p = buf; p < buf + buf_pos; p++) {
             if (*p == '\r' || *p == '\n') {
                 *p = '\0';
                 if (p > start) {
                     float progress = parse_git_progress(start);
-                    if (progress >= 0 && set_progress)
-                        set_progress(progress);
+                    if (progress >= 0.0f && set_progress) {
+                        set_progress(progress_offset + progress * progress_scale);
+                    }
                 }
-                /* Skip \r\n */
                 if (*p == '\r' && (p + 1) < buf + buf_pos && *(p + 1) == '\n')
                     p++;
                 start = p + 1;
             }
         }
 
-        /* Move remaining data to beginning */
         size_t remaining = (size_t)(buf + buf_pos - start);
         if (remaining > 0 && start != buf)
             memmove(buf, start, remaining);
@@ -236,7 +232,7 @@ static int run_git_streaming(const char **argv, const char *cwd,
 
     close(pipe_fd[0]);
 
-    int status;
+    int status = 0;
     waitpid(pid, &status, 0);
 
     if (killed)
@@ -248,41 +244,48 @@ static int run_git_streaming(const char **argv, const char *cwd,
 
 /* ── Sparse checkout management ───────────────────────────── */
 
+static void ensure_parent_dir(const char *path) {
+    char parent[PATH_MAX];
+    snprintf(parent, sizeof(parent), "%s", path);
+    char *slash = strrchr(parent, '/');
+    if (!slash)
+        return;
+
+    *slash = '\0';
+    for (char *p = parent + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            mkdir(parent, 0755);
+            *p = '/';
+        }
+    }
+    mkdir(parent, 0755);
+}
+
 static int is_repo_initialized(void) {
-    char repo[PATH_MAX], git_dir[PATH_MAX];
+    char repo[PATH_MAX];
+    char git_dir[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
     snprintf(git_dir, sizeof(git_dir), "%s/.git", repo);
+
     struct stat st;
     return stat(git_dir, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 static int init_cheat_repo(int *interrupt_signal,
-                            cheat_message_fn set_message,
-                            cheat_progress_fn set_progress) {
+                           cheat_message_fn set_message,
+                           cheat_progress_fn set_progress,
+                           float progress_scale,
+                           float progress_offset) {
     char repo[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
-
-    /* Ensure parent directory exists */
-    char parent[PATH_MAX];
-    snprintf(parent, sizeof(parent), "%s", repo);
-    char *slash = strrchr(parent, '/');
-    if (slash) {
-        *slash = '\0';
-        /* mkdir -p */
-        for (char *p = parent + 1; *p; p++) {
-            if (*p == '/') {
-                *p = '\0';
-                mkdir(parent, 0755);
-                *p = '/';
-            }
-        }
-        mkdir(parent, 0755);
-    }
+    ensure_parent_dir(repo);
 
     if (check_git_available() != 0)
         return -1;
 
-    if (set_message) set_message("Cloning cheat database...");
+    if (set_message)
+        set_message("Cloning cheat database...");
 
     const char *git = get_git_bin();
     const char *argv[] = {
@@ -299,45 +302,54 @@ static int init_cheat_repo(int *interrupt_signal,
         NULL,
     };
 
-    return run_git_streaming(argv, NULL, interrupt_signal, set_progress);
+    return run_git_streaming(argv, NULL, interrupt_signal,
+                             set_progress, progress_scale, progress_offset);
 }
 
 static int ensure_system_checked_out(const char *libretro_dir_name,
-                                      int *interrupt_signal,
-                                      cheat_message_fn set_message,
-                                      cheat_progress_fn set_progress) {
-    char repo[PATH_MAX], local_dir[PATH_MAX];
+                                     int *interrupt_signal,
+                                     cheat_message_fn set_message,
+                                     cheat_progress_fn set_progress,
+                                     float progress_scale,
+                                     float progress_offset) {
+    char repo[PATH_MAX];
+    char local_dir[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
     snprintf(local_dir, sizeof(local_dir), "%s/cht/%s", repo, libretro_dir_name);
 
     struct stat st;
     if (stat(local_dir, &st) == 0 && S_ISDIR(st.st_mode))
-        return 0; /* already checked out */
+        return 0;
 
-    char cht_path[512];
-    snprintf(cht_path, sizeof(cht_path), "cht/%s", libretro_dir_name);
+    char checkout_path[512];
+    snprintf(checkout_path, sizeof(checkout_path), "cht/%s", libretro_dir_name);
 
-    char msg[256];
-    snprintf(msg, sizeof(msg), "Checking out %s...", libretro_dir_name);
-    if (set_message) set_message(msg);
+    char message[256];
+    snprintf(message, sizeof(message), "Checking out %s...", libretro_dir_name);
+    if (set_message)
+        set_message(message);
 
     const char *git = get_git_bin();
     const char *argv[] = {
         git, "-C", repo,
-        "sparse-checkout", "add", cht_path,
+        "sparse-checkout", "add", checkout_path,
         NULL,
     };
 
-    return run_git_streaming(argv, NULL, interrupt_signal, set_progress);
+    return run_git_streaming(argv, NULL, interrupt_signal,
+                             set_progress, progress_scale, progress_offset);
 }
 
 static int update_cheat_repo(int *interrupt_signal,
-                              cheat_message_fn set_message,
-                              cheat_progress_fn set_progress) {
+                             cheat_message_fn set_message,
+                             cheat_progress_fn set_progress,
+                             float progress_scale,
+                             float progress_offset) {
     char repo[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
 
-    if (set_message) set_message("Updating cheat database...");
+    if (set_message)
+        set_message("Updating cheat database...");
 
     const char *git = get_git_bin();
     const char *argv[] = {
@@ -346,51 +358,56 @@ static int update_cheat_repo(int *interrupt_signal,
         NULL,
     };
 
-    return run_git_streaming(argv, NULL, interrupt_signal, set_progress);
+    return run_git_streaming(argv, NULL, interrupt_signal,
+                             set_progress, progress_scale, progress_offset);
 }
 
 /* ── Cheat name normalization and matching ────────────────── */
 
-/* Strip all parenthetical groups from a string: "Foo (USA) (Rev 1)" → "Foo" */
 static void strip_parentheticals(const char *in, char *out, size_t out_len) {
     size_t j = 0;
     int depth = 0;
     for (const char *p = in; *p && j < out_len - 1; p++) {
-        if (*p == '(') { depth++; continue; }
-        if (*p == ')') { if (depth > 0) depth--; continue; }
+        if (*p == '(') {
+            depth++;
+            continue;
+        }
+        if (*p == ')') {
+            if (depth > 0)
+                depth--;
+            continue;
+        }
         if (depth == 0)
             out[j++] = *p;
     }
     out[j] = '\0';
 
-    /* Trim trailing spaces */
     while (j > 0 && out[j - 1] == ' ')
         out[--j] = '\0';
 }
 
-/* Normalize a game name for fuzzy matching:
- * 1. Strip parenthetical groups
- * 2. Lowercase
- * 3. Strip punctuation
- * 4. Collapse whitespace */
 static void normalize_cheat_name(const char *name, char *out, size_t out_len) {
     char stripped[512];
     strip_parentheticals(name, stripped, sizeof(stripped));
 
     size_t j = 0;
-    int prev_space = 1; /* suppress leading space */
+    int prev_space = 1;
     for (const char *p = stripped; *p && j < out_len - 1; p++) {
         unsigned char c = (unsigned char)*p;
-        if (ispunct(c)) continue;
+        if (ispunct(c))
+            continue;
         if (isspace(c)) {
-            if (!prev_space) { out[j++] = ' '; prev_space = 1; }
+            if (!prev_space) {
+                out[j++] = ' ';
+                prev_space = 1;
+            }
             continue;
         }
         out[j++] = (char)tolower(c);
         prev_space = 0;
     }
-    /* Trim trailing space */
-    if (j > 0 && out[j - 1] == ' ') j--;
+    if (j > 0 && out[j - 1] == ' ')
+        j--;
     out[j] = '\0';
 }
 
@@ -402,22 +419,20 @@ typedef struct {
 } region_keyword;
 
 static const region_keyword cheat_region_map[] = {
-    /* Full names */
-    {"usa",       "us"},
-    {"europe",    "eu"},
-    {"japan",     "jp"},
-    {"world",     "wor"},
-    {"france",    "fr"},
-    {"germany",   "de"},
-    {"spain",     "es"},
-    {"italy",     "it"},
-    {"portugal",  "pt"},
+    {"usa", "us"},
+    {"europe", "eu"},
+    {"japan", "jp"},
+    {"world", "wor"},
+    {"france", "fr"},
+    {"germany", "de"},
+    {"spain", "es"},
+    {"italy", "it"},
+    {"portugal", "pt"},
     {"australia", "eu"},
-    {"korea",     "kr"},
-    {"china",     "cn"},
-    {"taiwan",    "tw"},
-    {"brazil",    "pt"},
-    /* 2-letter abbreviations */
+    {"korea", "kr"},
+    {"china", "cn"},
+    {"taiwan", "tw"},
+    {"brazil", "pt"},
     {"us", "us"},
     {"eu", "eu"},
     {"jp", "jp"},
@@ -430,33 +445,32 @@ static const region_keyword cheat_region_map[] = {
     {"cn", "cn"},
     {"tw", "tw"},
 };
+
 static const int cheat_region_map_count =
     (int)(sizeof(cheat_region_map) / sizeof(cheat_region_map[0]));
 
-/* Extract region codes from parenthetical groups in a name.
- * Returns count, fills regions[] (up to max_regions). */
-static int extract_cheat_regions(const char *name, const char **regions,
-                                  int max_regions) {
+static int extract_cheat_regions(const char *name, const char **regions, int max_regions) {
     int count = 0;
     const char *p = name;
 
     while ((p = strchr(p, '(')) != NULL) {
         p++;
         const char *end = strchr(p, ')');
-        if (!end) break;
+        if (!end)
+            break;
 
-        /* Parse comma-separated items inside parentheses */
         const char *item = p;
         while (item < end) {
-            /* Skip whitespace */
-            while (item < end && isspace((unsigned char)*item)) item++;
+            while (item < end && isspace((unsigned char)*item))
+                item++;
 
             const char *item_end = item;
-            while (item_end < end && *item_end != ',') item_end++;
+            while (item_end < end && *item_end != ',')
+                item_end++;
 
-            /* Trim trailing whitespace */
             const char *trim = item_end;
-            while (trim > item && isspace((unsigned char)*(trim - 1))) trim--;
+            while (trim > item && isspace((unsigned char)*(trim - 1)))
+                trim--;
 
             size_t len = (size_t)(trim - item);
             if (len > 0 && len < 32) {
@@ -467,14 +481,14 @@ static int extract_cheat_regions(const char *name, const char **regions,
 
                 for (int r = 0; r < cheat_region_map_count; r++) {
                     if (strcmp(lower, cheat_region_map[r].keyword) == 0) {
-                        /* Check for duplicates */
-                        int dup = 0;
+                        int duplicate = 0;
                         for (int d = 0; d < count; d++) {
                             if (strcmp(regions[d], cheat_region_map[r].code) == 0) {
-                                dup = 1; break;
+                                duplicate = 1;
+                                break;
                             }
                         }
-                        if (!dup && count < max_regions)
+                        if (!duplicate && count < max_regions)
                             regions[count++] = cheat_region_map[r].code;
                         break;
                     }
@@ -490,43 +504,37 @@ static int extract_cheat_regions(const char *name, const char **regions,
     return count;
 }
 
-/* Score how well a cheat file's regions match:
- * 1000+ = direct overlap with ROM (best)
- * 500   = "World" cheat
- * 100-N = matches user's region priority
- * 50    = no region info (neutral)
- * 0     = no match */
 static int score_cheat_region(const char **cheat_regions, int cheat_count,
-                               const char **rom_regions, int rom_count,
-                               char **region_prio, int prio_count) {
-    /* Direct overlap */
+                              const char **rom_regions, int rom_count,
+                              char **region_prio, int prio_count) {
     if (rom_count > 0 && cheat_count > 0) {
         int overlap = 0;
-        for (int c = 0; c < cheat_count; c++)
-            for (int r = 0; r < rom_count; r++)
+        for (int c = 0; c < cheat_count; c++) {
+            for (int r = 0; r < rom_count; r++) {
                 if (strcmp(cheat_regions[c], rom_regions[r]) == 0)
                     overlap++;
+            }
+        }
         if (overlap > 0)
             return 1000 + overlap;
     }
 
-    /* World */
-    for (int c = 0; c < cheat_count; c++)
+    for (int c = 0; c < cheat_count; c++) {
         if (strcmp(cheat_regions[c], "wor") == 0)
             return 500;
-
-    /* User priority */
-    if (cheat_count > 0 && prio_count > 0) {
-        for (int i = 0; i < prio_count; i++)
-            for (int c = 0; c < cheat_count; c++)
-                if (strcmp(cheat_regions[c], region_prio[i]) == 0)
-                    return 100 - i;
     }
 
-    /* No region info */
+    if (cheat_count > 0 && prio_count > 0) {
+        for (int i = 0; i < prio_count; i++) {
+            for (int c = 0; c < cheat_count; c++) {
+                if (strcmp(cheat_regions[c], region_prio[i]) == 0)
+                    return 100 - i;
+            }
+        }
+    }
+
     if (cheat_count == 0)
         return 50;
-
     return 0;
 }
 
@@ -560,34 +568,45 @@ static cheat_entry *cheat_list_find(cheat_list *list, const char *normalized) {
 }
 
 static void cheat_list_add(cheat_list *list, const char *normalized,
-                            const char *path, const char **regions, int region_count) {
+                           const char *path, const char **regions, int region_count) {
     cheat_entry *entry = cheat_list_find(list, normalized);
     if (!entry) {
         if (list->count >= list->cap) {
-            list->cap = list->cap ? list->cap * 2 : 256;
-            list->entries = realloc(list->entries, sizeof(cheat_entry) * (size_t)list->cap);
+            int new_cap = list->cap ? list->cap * 2 : 256;
+            cheat_entry *new_entries =
+                realloc(list->entries, sizeof(cheat_entry) * (size_t)new_cap);
+            if (!new_entries)
+                return;
+            list->entries = new_entries;
+            list->cap = new_cap;
         }
+
         entry = &list->entries[list->count++];
+        memset(entry, 0, sizeof(*entry));
         snprintf(entry->normalized, sizeof(entry->normalized), "%s", normalized);
-        entry->candidates = NULL;
-        entry->candidate_count = 0;
-        entry->candidate_cap = 0;
     }
 
     if (entry->candidate_count >= entry->candidate_cap) {
-        entry->candidate_cap = entry->candidate_cap ? entry->candidate_cap * 2 : 4;
-        entry->candidates = realloc(entry->candidates,
-                                     sizeof(cheat_candidate) * (size_t)entry->candidate_cap);
+        int new_cap = entry->candidate_cap ? entry->candidate_cap * 2 : 4;
+        cheat_candidate *new_candidates =
+            realloc(entry->candidates, sizeof(cheat_candidate) * (size_t)new_cap);
+        if (!new_candidates)
+            return;
+        entry->candidates = new_candidates;
+        entry->candidate_cap = new_cap;
     }
 
-    cheat_candidate *c = &entry->candidates[entry->candidate_count++];
-    snprintf(c->path, sizeof(c->path), "%s", path);
-    c->region_count = (region_count > 16) ? 16 : region_count;
-    for (int i = 0; i < c->region_count; i++)
-        c->regions[i] = regions[i];
+    cheat_candidate *candidate = &entry->candidates[entry->candidate_count++];
+    memset(candidate, 0, sizeof(*candidate));
+    snprintf(candidate->path, sizeof(candidate->path), "%s", path);
+    candidate->region_count = region_count > 16 ? 16 : region_count;
+    for (int i = 0; i < candidate->region_count; i++)
+        candidate->regions[i] = regions[i];
 }
 
 static void cheat_list_free(cheat_list *list) {
+    if (!list)
+        return;
     for (int i = 0; i < list->count; i++)
         free(list->entries[i].candidates);
     free(list->entries);
@@ -596,39 +615,38 @@ static void cheat_list_free(cheat_list *list) {
     list->cap = 0;
 }
 
-/* Build cheat list from local checkout */
 static int build_cheat_list(const char *libretro_dir_name, cheat_list *list) {
-    char repo[PATH_MAX], cht_dir[PATH_MAX];
+    char repo[PATH_MAX];
+    char cheat_dir[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
-    snprintf(cht_dir, sizeof(cht_dir), "%s/cht/%s", repo, libretro_dir_name);
+    snprintf(cheat_dir, sizeof(cheat_dir), "%s/cht/%s", repo, libretro_dir_name);
 
-    DIR *dir = opendir(cht_dir);
-    if (!dir) return -1;
+    DIR *dir = opendir(cheat_dir);
+    if (!dir)
+        return -1;
 
     memset(list, 0, sizeof(*list));
+
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
+        if (entry->d_name[0] == '.')
+            continue;
+
         size_t len = strlen(entry->d_name);
         if (len < 5 || strcasecmp(entry->d_name + len - 4, ".cht") != 0)
             continue;
 
-        /* Build full path */
         char full_path[PATH_MAX];
-        snprintf(full_path, sizeof(full_path), "%s/%s", cht_dir, entry->d_name);
+        snprintf(full_path, sizeof(full_path), "%s/%s", cheat_dir, entry->d_name);
 
-        /* Strip extension for game name */
         char game_name[256];
         snprintf(game_name, sizeof(game_name), "%.*s", (int)(len - 4), entry->d_name);
 
-        /* Normalize */
         char normalized[256];
         normalize_cheat_name(game_name, normalized, sizeof(normalized));
 
-        /* Extract regions */
         const char *regions[16];
         int region_count = extract_cheat_regions(game_name, regions, 16);
-
         cheat_list_add(list, normalized, full_path, regions, region_count);
     }
 
@@ -637,9 +655,8 @@ static int build_cheat_list(const char *libretro_dir_name, cheat_list *list) {
     return 0;
 }
 
-/* Find best matching cheat file for a ROM */
 static const char *match_cheat(const char *rom_display, cheat_list *list,
-                                char **region_prio, int region_count) {
+                               char **region_prio, int region_count) {
     char normalized[256];
     normalize_cheat_name(rom_display, normalized, sizeof(normalized));
 
@@ -650,21 +667,19 @@ static const char *match_cheat(const char *rom_display, cheat_list *list,
     if (entry->candidate_count == 1)
         return entry->candidates[0].path;
 
-    /* Multiple candidates — pick best by region */
     const char *rom_regions[16];
     int rom_region_count = extract_cheat_regions(rom_display, rom_regions, 16);
 
     int best_score = -1;
     const char *best_path = entry->candidates[0].path;
-
     for (int i = 0; i < entry->candidate_count; i++) {
-        cheat_candidate *c = &entry->candidates[i];
-        int score = score_cheat_region(c->regions, c->region_count,
-                                        rom_regions, rom_region_count,
-                                        region_prio, region_count);
+        cheat_candidate *candidate = &entry->candidates[i];
+        int score = score_cheat_region(candidate->regions, candidate->region_count,
+                                       rom_regions, rom_region_count,
+                                       region_prio, region_count);
         if (score > best_score) {
             best_score = score;
-            best_path = c->path;
+            best_path = candidate->path;
         }
     }
 
@@ -674,119 +689,156 @@ static const char *match_cheat(const char *rom_display, cheat_list *list,
 /* ── File copy helper ─────────────────────────────────────── */
 
 static int copy_file(const char *src, const char *dst) {
-    /* Ensure parent directory */
-    char parent[PATH_MAX];
-    snprintf(parent, sizeof(parent), "%s", dst);
-    char *slash = strrchr(parent, '/');
-    if (slash) {
-        *slash = '\0';
-        for (char *p = parent + 1; *p; p++) {
-            if (*p == '/') {
-                *p = '\0';
-                mkdir(parent, 0755);
-                *p = '/';
-            }
-        }
-        mkdir(parent, 0755);
-    }
+    ensure_parent_dir(dst);
+
+    char tmp_path[PATH_MAX];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", dst);
 
     FILE *in = fopen(src, "rb");
-    if (!in) return -1;
+    if (!in)
+        return -1;
 
-    FILE *out = fopen(dst, "wb");
-    if (!out) { fclose(in); return -1; }
+    FILE *out = fopen(tmp_path, "wb");
+    if (!out) {
+        fclose(in);
+        return -1;
+    }
 
     char buf[8192];
     size_t n;
+    int ok = 1;
     while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
         if (fwrite(buf, 1, n, out) != n) {
-            fclose(in);
-            fclose(out);
-            return -1;
+            ok = 0;
+            break;
         }
     }
 
+    if (fflush(out) != 0 || fsync(fileno(out)) != 0)
+        ok = 0;
+
     fclose(in);
-    if (fclose(out) != 0) return -1;
+    if (fclose(out) != 0)
+        ok = 0;
+
+    if (!ok) {
+        unlink(tmp_path);
+        return -1;
+    }
+
+    if (rename(tmp_path, dst) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+
     return 0;
 }
 
 /* ── Console cheat downloader ─────────────────────────────── */
 
-scrape_summary download_cheats_for_console(const console_dir *console,
-                                           char **region_prio, int region_count,
-                                           int *interrupt_signal,
-                                           cheat_progress_fn set_progress,
-                                           cheat_message_fn set_message) {
+run_result download_cheats_for_console(const console_dir *console,
+                                       char **region_prio, int region_count,
+                                       int *interrupt_signal,
+                                       cheat_progress_fn set_progress,
+                                       cheat_message_fn set_message) {
     scrape_summary summary = {0};
+    run_result result = make_run_result(RUN_OK, summary, NULL);
+    cheat_list list;
+    rom_file *roms = NULL;
+    bool list_ready = false;
+    bool cancelled = false;
 
-    const char *lr_dir = libretro_dir(console->tag);
-    if (!lr_dir) {
-        fprintf(stderr, "cheats: no libretro dir for %s\n", console->tag);
-        return summary;
-    }
+    const char *libretro_dir_name = libretro_dir(console->tag);
+    if (!libretro_dir_name)
+        return make_run_error(summary, "This system does not have a Libretro cheat directory.");
 
-    if (set_progress) set_progress(0.0f);
+    if (set_progress)
+        set_progress(0.0f);
 
-    /* Phase 1: Clone or update git repo [0.0 → 0.3] */
     if (!is_repo_initialized()) {
-        int ret = init_cheat_repo(interrupt_signal, set_message, set_progress);
-        if (ret == -2) return summary; /* interrupted */
-        if (ret != 0) {
-            fprintf(stderr, "cheats: clone failed\n");
-            return summary;
+        int init_result = init_cheat_repo(interrupt_signal, set_message, set_progress, 0.3f, 0.0f);
+        if (init_result == -2) {
+            cancelled = true;
+            goto cleanup;
+        }
+        if (init_result != 0) {
+            result = make_run_error(summary, "Failed to clone the cheat database.");
+            goto cleanup;
         }
     } else {
-        int ret = update_cheat_repo(interrupt_signal, set_message, set_progress);
-        if (ret == -2) return summary; /* interrupted */
-        if (ret != 0)
+        int update_result = update_cheat_repo(interrupt_signal, set_message, set_progress, 0.3f, 0.0f);
+        if (update_result == -2) {
+            cancelled = true;
+            goto cleanup;
+        }
+        if (update_result != 0) {
             fprintf(stderr, "cheats: pull failed (using existing data)\n");
-    }
-    if (set_progress) set_progress(0.3f);
-
-    /* Phase 2: Ensure system checked out [0.3 → 0.5] */
-    {
-        int ret = ensure_system_checked_out(lr_dir, interrupt_signal,
-                                             set_message, set_progress);
-        if (ret == -2) return summary;
-        if (ret != 0) {
-            fprintf(stderr, "cheats: checkout failed for %s\n", lr_dir);
-            return summary;
         }
     }
-    if (set_progress) set_progress(0.5f);
 
-    /* Build cheat list from local files */
-    if (set_message) set_message("Building cheat list...");
-    cheat_list list;
-    if (build_cheat_list(lr_dir, &list) != 0 || list.count == 0) {
-        fprintf(stderr, "cheats: no cheats available for %s\n", lr_dir);
-        cheat_list_free(&list);
-        return summary;
+    if (set_progress)
+        set_progress(0.3f);
+
+    {
+        int checkout_result = ensure_system_checked_out(libretro_dir_name, interrupt_signal,
+                                                        set_message, set_progress, 0.2f, 0.3f);
+        if (checkout_result == -2) {
+            cancelled = true;
+            goto cleanup;
+        }
+        if (checkout_result != 0) {
+            result = make_run_error(summary, "Failed to check out cheats for this system.");
+            goto cleanup;
+        }
     }
 
-    /* Scan ROMs */
-    rom_file *roms = NULL;
+    if (set_progress)
+        set_progress(0.5f);
+
+    if (set_message)
+        set_message("Building cheat list...");
+
+    if (build_cheat_list(libretro_dir_name, &list) != 0) {
+        result = make_run_error(summary, "Failed to build the cheat list for this system.");
+        goto cleanup;
+    }
+    list_ready = true;
+
+    if (list.count == 0) {
+        result = make_run_error(summary, "No cheats are available for this system.");
+        goto cleanup;
+    }
+
     int rom_count = scan_roms(console->path, false, &roms);
+    if (rom_count < 0) {
+        result = make_run_error(summary, "Could not read ROM files for this system.");
+        goto cleanup;
+    }
+
     summary.total = rom_count;
 
-    /* Get cheats output directory */
     char cheats_base[PATH_MAX];
     get_cheats_path(cheats_base, sizeof(cheats_base));
 
     for (int i = 0; i < rom_count; i++) {
-        if (interrupt_signal && *interrupt_signal != 0) break;
+        if (interrupt_signal && *interrupt_signal != 0) {
+            cancelled = true;
+            break;
+        }
 
-        /* Progress [0.5 → 1.0] */
-        if (set_progress)
-            set_progress(0.5f + (float)i / (float)rom_count * 0.5f);
+        if (set_progress) {
+            float loop_progress = rom_count > 0 ? (float)i / (float)rom_count : 1.0f;
+            set_progress(0.5f + loop_progress * 0.5f);
+        }
 
-        char msg[512];
-        snprintf(msg, sizeof(msg), "(%d/%d) %s", i + 1, rom_count, roms[i].display);
-        if (set_message) set_message(msg);
+        if (set_message) {
+            char message[512];
+            snprintf(message, sizeof(message), "(%d/%d) %s",
+                     i + 1, rom_count, roms[i].display);
+            set_message(message);
+        }
 
-        const char *src_path = match_cheat(roms[i].display, &list,
-                                            region_prio, region_count);
+        const char *src_path = match_cheat(roms[i].display, &list, region_prio, region_count);
         if (!src_path) {
             summary.not_found++;
             continue;
@@ -796,7 +848,6 @@ scrape_summary download_cheats_for_console(const console_dir *console,
         snprintf(dest_path, sizeof(dest_path), "%s/%s/%s.cht",
                  cheats_base, console->tag, roms[i].display);
 
-        /* Skip if already exists */
         struct stat st;
         if (stat(dest_path, &st) == 0) {
             summary.found++;
@@ -809,12 +860,19 @@ scrape_summary download_cheats_for_console(const console_dir *console,
             summary.errors++;
     }
 
-    if (set_progress) set_progress(1.0f);
+    result = make_run_result(cancelled ? RUN_CANCELLED : RUN_OK, summary, NULL);
 
-    cheat_list_free(&list);
+cleanup:
+    if (list_ready)
+        cheat_list_free(&list);
     free(roms);
 
-    fprintf(stderr, "cheats: done. total=%d found=%d notFound=%d errors=%d\n",
-            summary.total, summary.found, summary.not_found, summary.errors);
-    return summary;
+    if (cancelled) {
+        result = make_run_result(RUN_CANCELLED, summary, NULL);
+    }
+
+    if (result.status != RUN_ERROR && set_progress)
+        set_progress(1.0f);
+
+    return result;
 }

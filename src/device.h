@@ -30,6 +30,18 @@ typedef struct {
     int errors;
 } scrape_summary;
 
+typedef enum {
+    RUN_OK = 0,
+    RUN_CANCELLED,
+    RUN_ERROR,
+} run_status;
+
+typedef struct {
+    run_status status;
+    scrape_summary summary;
+    char error[256];
+} run_result;
+
 /* ── Media type definitions ─────────────────────────────────── */
 
 typedef struct {

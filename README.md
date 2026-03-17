@@ -1,6 +1,6 @@
 # ScrapeGoat
 
-Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your ROM library on tg5040/tg5050 devices.
+Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your ROM library on `tg5040`, `tg5050`, and `my355` devices.
 
 ## Supported Platforms
 
@@ -9,6 +9,7 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 | `tg5040` (TG5040) | TrimUI Smart Pro | 1280×720 | Docker (ARM64) |
 | `tg5040` (TG3040) | TrimUI Brick | 1024×768 | Docker (ARM64) |
 | `tg5050` | TrimUI Smart Pro S | 1280×720 | Docker (ARM64) |
+| `my355` | Miyoo Flip / RK3566 class | Device-dependent | Docker (ARM64) |
 
 > The Brick and Smart Pro share the same `tg5040` filesystem layout (tools, roms, settings paths are identical). The pak auto-detects the Brick via the `DEVICE` environment variable (`"brick"` vs `"smartpro"`), which NextUI's `launch.sh` exports at startup.
 
@@ -300,35 +301,29 @@ SCREENSCRAPER_DEV_PASSWORD=your_dev_password
 
 These are embedded in the binary at build time via the Makefile. The `.env.local` file is in `.gitignore` and will never be committed.
 
-To download and vendor dependencies:
-```bash
-make deps
-```
-
-This vendors Go modules and applies necessary patches to Gabagool for TG5050 support.
+Embedded builds vendor their own curl/OpenSSL runtime bits and package `lib/cacert.pem` alongside the pak.
 
 ### Build Commands
 
 ```bash
-# Auto-detect platform and build
-make
-
-# Build for specific platform
+# Build the mac development binary
 make mac
+
+# Build for specific device platforms
 make tg5040
 make tg5050
+make my355
 
-# Build for all embedded platforms
-make embedded
+# Build all device platforms
+make
 
-# Package as .pak bundles for NextUI
+# Package per-platform bundles
+make package-tg5040
+make package-tg5050
+make package-my355
+
+# Package all supported platforms into release zips + combined .pakz
 make package
-
-# Export TrimUI .pakz (Tools/tg5040 + Tools/tg5050 layout)
-make export-trimui
-
-# Update dependencies and re-apply patches
-make deps
 
 # See all targets
 make help
@@ -338,29 +333,34 @@ make help
 
 | Target | Output |
 |--------|--------|
-| mac | `build/scrapegoat` |
-| tg5040 | `build/release/tg5040/ScrapeGoat.pak.zip` |
-| tg5050 | `build/release/tg5050/ScrapeGoat.pak.zip` |
-| export-trimui | `build/release/trimui/ScrapeGoat.pakz` |
+| mac | `build/mac/scrapegoat` |
+| tg5040 | `build/tg5040/scrapegoat` |
+| tg5050 | `build/tg5050/scrapegoat` |
+| my355 | `build/my355/scrapegoat` |
+| package-tg5040 | `build/release/tg5040/ScrapeGoat.pak.zip` |
+| package-tg5050 | `build/release/tg5050/ScrapeGoat.pak.zip` |
+| package-my355 | `build/release/my355/ScrapeGoat.pak.zip` |
+| package | `build/release/all/ScrapeGoat.pakz` |
 
 The `.pak.zip` includes:
 - Binary (`scrapegoat`)
 - Launch script (`launch.sh`)
 - Pak metadata (`pak.json`)
 - License file (`LICENSE`)
-- Bundled static git binary (with HTTPS support via embedded CA certs)
+- Bundled static git binary
+- Bundled TLS trust store at `lib/cacert.pem` used by both libcurl and git
 
 ## Installing on a Handheld
 
-1. **Build and package:** `make package` or `make export-trimui`
+1. **Build and package:** `make package` for all platforms, or `make package-<platform>` for one target.
 
-2. **If using `make package`:**
+2. **For a per-platform zip:**
    - Extract `ScrapeGoat.pak.zip` to your SD card as `Tools/<platform>/ScrapeGoat.pak/`
-   - Replace `<platform>` with `tg5040` or `tg5050`
+   - Replace `<platform>` with `tg5040`, `tg5050`, or `my355`
 
-3. **If using `make export-trimui`:**
-   - Place `ScrapeGoat.pakz` at the root of your SD card
-   - NextUI will auto-install it upon (re)boot, creating both `Tools/tg5040/ScrapeGoat.pak/` and `Tools/tg5050/ScrapeGoat.pak/`
+3. **For the combined `.pakz`:**
+   - Place `build/release/all/ScrapeGoat.pakz` at the root of your SD card
+   - NextUI will auto-install it into the matching `Tools/<platform>/ScrapeGoat.pak/` directory
 
 4. **Launch** from the NextUI Tools menu
 

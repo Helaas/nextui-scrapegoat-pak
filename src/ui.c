@@ -174,16 +174,24 @@ static int pick_scrape_mode(bool *missing_only) {
     return 1;
 }
 
-static void show_scrape_summary(scrape_summary s) {
+static void show_scrape_result(run_result result) {
     char msg[256];
-    snprintf(msg, sizeof(msg),
-        "Scraping complete!\n\nTotal:     %d\nFound:     %d\nNot found: %d\nErrors:    %d",
-        s.total, s.found, s.not_found, s.errors);
+    if (result.status == RUN_CANCELLED) {
+        snprintf(msg, sizeof(msg),
+            "Scraping stopped.\n\nTotal:     %d\nFound:     %d\nNot found: %d\nErrors:    %d",
+            result.summary.total, result.summary.found,
+            result.summary.not_found, result.summary.errors);
+    } else {
+        snprintf(msg, sizeof(msg),
+            "Scraping complete!\n\nTotal:     %d\nFound:     %d\nNot found: %d\nErrors:    %d",
+            result.summary.total, result.summary.found,
+            result.summary.not_found, result.summary.errors);
+    }
 
     ap_footer_item footer[] = {{AP_BTN_A, "OK", true}};
     ap_message_opts opts = {.message = msg, .footer = footer, .footer_count = 1};
-    ap_confirm_result result;
-    ap_confirmation(&opts, &result);
+    ap_confirm_result confirm;
+    ap_confirmation(&opts, &confirm);
 }
 
 /* Scrape worker context for ap_process_message */
@@ -191,7 +199,7 @@ typedef struct {
     const console_dir *console;
     bool missing_only;
     app_settings settings;
-    scrape_summary summary;
+    run_result result;
     float *progress;
     int *interrupt_signal;
     char **dynamic_message;
@@ -217,7 +225,7 @@ static int scrape_worker_fn(void *userdata) {
     scrape_ctx *ctx = (scrape_ctx *)userdata;
     g_scrape_ctx = ctx;
 
-    ctx->summary = scrape_console(ctx->console, ctx->missing_only, &ctx->settings,
+    ctx->result = scrape_console(ctx->console, ctx->missing_only, &ctx->settings,
         (atomic_int *)ctx->interrupt_signal,
         scrape_progress_cb,
         scrape_message_cb
@@ -275,7 +283,10 @@ static void scrape_artwork_flow(void) {
     };
 
     ap_process_message(&opts, scrape_worker_fn, &ctx);
-    show_scrape_summary(ctx.summary);
+    if (ctx.result.status == RUN_ERROR)
+        show_error(ctx.result.error);
+    else
+        show_scrape_result(ctx.result);
     free_settings(&settings);
 }
 
@@ -337,43 +348,75 @@ static int pick_console_for_cheats(const app_settings *settings,
     return ok;
 }
 
-static void show_cheat_summary(scrape_summary s) {
+static void show_cheat_result(run_result result) {
     char msg[256];
-    snprintf(msg, sizeof(msg),
-        "Download complete!\n\nTotal:      %d\nDownloaded: %d\nNot found:  %d\nErrors:     %d",
-        s.total, s.found, s.not_found, s.errors);
+    if (result.status == RUN_CANCELLED) {
+        snprintf(msg, sizeof(msg),
+            "Download stopped.\n\nTotal:      %d\nDownloaded: %d\nNot found:  %d\nErrors:     %d",
+            result.summary.total, result.summary.found,
+            result.summary.not_found, result.summary.errors);
+    } else {
+        snprintf(msg, sizeof(msg),
+            "Download complete!\n\nTotal:      %d\nDownloaded: %d\nNot found:  %d\nErrors:     %d",
+            result.summary.total, result.summary.found,
+            result.summary.not_found, result.summary.errors);
+    }
 
     ap_footer_item footer[] = {{AP_BTN_A, "OK", true}};
     ap_message_opts opts = {.message = msg, .footer = footer, .footer_count = 1};
-    ap_confirm_result result;
-    ap_confirmation(&opts, &result);
+    ap_confirm_result confirm;
+    ap_confirmation(&opts, &confirm);
 }
 
 typedef struct {
     const console_dir *console;
     app_settings settings;
-    scrape_summary summary;
+    run_result result;
     float *progress;
     int *interrupt_signal;
     char **dynamic_message;
 } cheat_ctx;
 
+static cheat_ctx *g_cheat_ctx;
+
+static void cheat_progress_cb(float p) {
+    if (g_cheat_ctx && g_cheat_ctx->progress)
+        *g_cheat_ctx->progress = p;
+}
+
+static void cheat_message_cb(const char *msg) {
+    if (!g_cheat_ctx || !g_cheat_ctx->dynamic_message)
+        return;
+
+    static char buf[512];
+    snprintf(buf, sizeof(buf), "%s", msg);
+    *g_cheat_ctx->dynamic_message = buf;
+}
+
 static int cheat_worker_fn(void *userdata) {
     cheat_ctx *ctx = (cheat_ctx *)userdata;
+    g_cheat_ctx = ctx;
 
-    int artwork_count = 0;
-    char **region_prio = build_region_types(&ctx->settings, &artwork_count);
+    int region_count = 0;
+    char **region_prio = build_region_types(&ctx->settings, &region_count);
+    if (!region_prio) {
+        ctx->result.status = RUN_ERROR;
+        ctx->result.summary = (scrape_summary){0};
+        snprintf(ctx->result.error, sizeof(ctx->result.error),
+                 "Out of memory while preparing region priorities.");
+        g_cheat_ctx = NULL;
+        return 0;
+    }
 
-    ctx->summary = download_cheats_for_console(ctx->console,
-        region_prio, artwork_count, ctx->interrupt_signal,
-        /* progress callback */
-        NULL, /* progress handled via ctx->progress directly */
-        /* message callback */
-        NULL  /* message handled via ctx->dynamic_message directly */
+    ctx->result = download_cheats_for_console(ctx->console,
+        region_prio, region_count, ctx->interrupt_signal,
+        cheat_progress_cb,
+        cheat_message_cb
     );
 
-    for (int i = 0; i < artwork_count; i++) free(region_prio[i]);
+    for (int i = 0; i < region_count; i++) free(region_prio[i]);
     free(region_prio);
+    g_cheat_ctx = NULL;
     return 0;
 }
 
@@ -388,6 +431,9 @@ static void download_cheats_flow(void) {
 
     float progress = 0.0f;
     int interrupt_signal = 0;
+    static char dyn_msg_buf[512];
+    char *dyn_msg = dyn_msg_buf;
+    snprintf(dyn_msg_buf, sizeof(dyn_msg_buf), "Preparing...");
 
     char title[256];
     snprintf(title, sizeof(title), "Downloading cheats for %s...", console.display);
@@ -397,6 +443,7 @@ static void download_cheats_flow(void) {
         .settings = settings,
         .progress = &progress,
         .interrupt_signal = &interrupt_signal,
+        .dynamic_message = &dyn_msg,
     };
 
     ap_process_opts opts = {
@@ -405,10 +452,15 @@ static void download_cheats_flow(void) {
         .progress = &progress,
         .interrupt_signal = &interrupt_signal,
         .interrupt_button = AP_BTN_Y,
+        .dynamic_message = &dyn_msg,
+        .message_lines = 3,
     };
 
     ap_process_message(&opts, cheat_worker_fn, &ctx);
-    show_cheat_summary(ctx.summary);
+    if (ctx.result.status == RUN_ERROR)
+        show_error(ctx.result.error);
+    else
+        show_cheat_result(ctx.result);
     free_settings(&settings);
 }
 
