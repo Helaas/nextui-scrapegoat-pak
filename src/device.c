@@ -330,6 +330,42 @@ static int rom_cmp(const void *a, const void *b) {
     return strcasecmp(ra->display, rb->display);
 }
 
+/* Extensions that are never ROM files — artwork, metadata, save data, videos. */
+static bool is_non_game_extension(const char *name) {
+    const char *dot = strrchr(name, '.');
+    if (!dot || dot == name) return false;
+    const char *ext = dot + 1;
+
+    /* Images */
+    if (strcasecmp(ext, "png") == 0 || strcasecmp(ext, "jpg") == 0 ||
+        strcasecmp(ext, "jpeg") == 0 || strcasecmp(ext, "bmp") == 0 ||
+        strcasecmp(ext, "gif") == 0 || strcasecmp(ext, "svg") == 0 ||
+        strcasecmp(ext, "ico") == 0 || strcasecmp(ext, "webp") == 0)
+        return true;
+
+    /* Text / metadata */
+    if (strcasecmp(ext, "txt") == 0 || strcasecmp(ext, "xml") == 0 ||
+        strcasecmp(ext, "nfo") == 0 || strcasecmp(ext, "htm") == 0 ||
+        strcasecmp(ext, "html") == 0 || strcasecmp(ext, "log") == 0 ||
+        strcasecmp(ext, "cfg") == 0 || strcasecmp(ext, "ini") == 0 ||
+        strcasecmp(ext, "pdf") == 0 || strcasecmp(ext, "doc") == 0 ||
+        strcasecmp(ext, "docx") == 0 || strcasecmp(ext, "rtf") == 0)
+        return true;
+
+    /* Save data */
+    if (strcasecmp(ext, "srm") == 0 || strcasecmp(ext, "sav") == 0 ||
+        strcasecmp(ext, "oops") == 0 || strcasecmp(ext, "db") == 0)
+        return true;
+
+    /* Preview videos / scrape sidecars */
+    if (strcasecmp(ext, "mp4") == 0 || strcasecmp(ext, "m4v") == 0 ||
+        strcasecmp(ext, "mkv") == 0 || strcasecmp(ext, "avi") == 0 ||
+        strcasecmp(ext, "mov") == 0 || strcasecmp(ext, "webm") == 0)
+        return true;
+
+    return false;
+}
+
 /* Internal recursive scanner */
 static int scan_roms_internal(const char *dir_path, bool show_hidden,
                               rom_file **out, int *count, int *capacity) {
@@ -404,6 +440,10 @@ static int scan_roms_internal(const char *dir_path, bool show_hidden,
             }
             continue;
         }
+
+        /* Skip non-game files (images, metadata, save data, videos) */
+        if (is_non_game_extension(base_name))
+            continue;
 
         /* Regular file */
         if (*count >= *capacity) {

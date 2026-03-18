@@ -26,8 +26,11 @@
 
 /* ── Forward declarations ─────────────────────────────────── */
 
+typedef enum { LIB_MODE_ART, LIB_MODE_CHEAT } library_mode;
+
 static void show_rom_list_screen(const console_dir *console,
-                                  const app_settings *settings);
+                                  const app_settings *settings,
+                                  library_mode mode);
 
 /* ── Helpers ──────────────────────────────────────────────── */
 
@@ -112,7 +115,8 @@ static system_stats compute_system_stats(const console_dir *console, bool show_h
 
 typedef enum {
     MAIN_QUIT = 0,
-    MAIN_LIBRARY,
+    MAIN_SCRAPE_ART,
+    MAIN_DOWNLOAD_CHEATS,
     MAIN_PROGRESS,
     MAIN_SETTINGS,
 } main_action;
@@ -128,7 +132,8 @@ static main_action show_main_menu(void) {
         snprintf(progress_label, sizeof(progress_label), "Progress");
 
     ap_list_item items[] = {
-        {.label = "Library"},
+        {.label = "Scrape Artwork"},
+        {.label = "Download Cheats"},
         {.label = progress_label},
         {.label = "Settings"},
     };
@@ -137,7 +142,7 @@ static main_action show_main_menu(void) {
         {AP_BTN_A, "Select", true},
     };
 
-    ap_list_opts opts = ap_list_default_opts("ScrapeGoat", items, 3);
+    ap_list_opts opts = ap_list_default_opts("ScrapeGoat", items, 4);
     opts.footer = footer;
     opts.footer_count = 2;
 
@@ -147,23 +152,151 @@ static main_action show_main_menu(void) {
         return MAIN_QUIT;
 
     switch (result.selected_index) {
-    case 0: return MAIN_LIBRARY;
-    case 1: return MAIN_PROGRESS;
-    case 2: return MAIN_SETTINGS;
+    case 0: return MAIN_SCRAPE_ART;
+    case 1: return MAIN_DOWNLOAD_CHEATS;
+    case 2: return MAIN_PROGRESS;
+    case 3: return MAIN_SETTINGS;
     default: return MAIN_QUIT;
     }
 }
 
+/* ── Library: ROM list ────────────────────────────────────── */
+
+static const char *rom_status_label(const rom_file *rom,
+                                     const console_dir *console,
+                                     library_mode mode) {
+    if (mode == LIB_MODE_ART) {
+        queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_ARTWORK);
+        if (qs >= QUEUE_IDLE && qs <= QUEUE_DOWNLOADING) {
+            switch (qs) {
+            case QUEUE_IDLE:        return "queued";
+            case QUEUE_SEARCHING:   return "searching";
+            case QUEUE_DOWNLOADING: return "downloading";
+            default:                return "queued";
+            }
+        }
+        return artwork_exists(rom->path, rom->display) ? "art" : NULL;
+    } else {
+        queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_CHEAT);
+        if (qs >= QUEUE_IDLE && qs <= QUEUE_MATCHING) {
+            switch (qs) {
+            case QUEUE_IDLE:        return "queued";
+            case QUEUE_CLONING:     return "cloning";
+            case QUEUE_MATCHING:    return "matching";
+            default:                return "queued";
+            }
+        }
+        return cheat_exists(console->tag, rom->display) ? "cht" : NULL;
+    }
+}
+
+static void show_rom_list_screen(const console_dir *console,
+                                  const app_settings *settings,
+                                  library_mode mode) {
+    rom_file *roms = NULL;
+    int rom_count = scan_roms(console->path, settings->show_hidden, &roms);
+    if (rom_count <= 0) {
+        show_error("No ROMs found in this system.");
+        free(roms);
+        return;
+    }
+
+    const char *queue_label = (mode == LIB_MODE_ART) ? "Queue Art" : "Queue Cheat";
+    const char *queue_all_label = (mode == LIB_MODE_ART) ? "Queue All Art" : "Queue All Cheats";
+
+    int initial_idx = 0;
+    int visible_start = 0;
+
+    for (;;) {
+        /* Build list items with embedded status */
+        char (*labels)[512] = malloc(sizeof(char[512]) * (size_t)rom_count);
+        ap_list_item *items = calloc((size_t)rom_count, sizeof(ap_list_item));
+
+        for (int i = 0; i < rom_count; i++) {
+            const char *status = rom_status_label(&roms[i], console, mode);
+            if (status)
+                snprintf(labels[i], 512, "%s   [%s]", roms[i].display, status);
+            else
+                snprintf(labels[i], 512, "%s", roms[i].display);
+            items[i].label = labels[i];
+        }
+
+        ap_footer_item footer[] = {
+            {AP_BTN_B, "Back", false},
+            {AP_BTN_A, queue_label, false},
+            {AP_BTN_Y, queue_all_label, true},
+        };
+
+        char title[256];
+        snprintf(title, sizeof(title), "%s", console->display);
+
+        ap_list_opts opts = ap_list_default_opts(title, items, rom_count);
+        opts.footer = footer;
+        opts.footer_count = 3;
+        opts.secondary_action_button = AP_BTN_Y;
+        opts.initial_index = initial_idx;
+        opts.visible_start_index = visible_start;
+
+        ap_list_result result;
+        int ret = ap_list(&opts, &result);
+
+        initial_idx = result.selected_index;
+        visible_start = result.visible_start_index;
+
+        free(labels);
+        free(items);
+
+        if (ret == AP_CANCELLED) break;
+
+        int sel = result.selected_index;
+        if (sel < 0 || sel >= rom_count) break;
+
+        if (result.action == AP_ACTION_SELECTED || result.action == AP_ACTION_TRIGGERED) {
+            /* A: Queue single ROM */
+            queue_set_settings(settings);
+            bool added;
+            if (mode == LIB_MODE_ART)
+                added = queue_add_artwork(&roms[sel], console);
+            else
+                added = queue_add_cheat(&roms[sel], console);
+
+            if (added) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Queued \"%s\" for %s.",
+                         roms[sel].display,
+                         mode == LIB_MODE_ART ? "artwork" : "cheats");
+                show_brief(msg);
+            } else {
+                show_brief(mode == LIB_MODE_ART
+                    ? "Already queued or artwork exists."
+                    : "Already queued or cheat exists.");
+            }
+            continue;
+        }
+
+        if (result.action == AP_ACTION_SECONDARY_TRIGGERED) {
+            /* Y: Queue all */
+            queue_set_settings(settings);
+            int added;
+            if (mode == LIB_MODE_ART)
+                added = queue_add_all_artwork(console, settings->show_hidden);
+            else
+                added = queue_add_all_cheats(console, settings->show_hidden);
+
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Queued %d ROMs for %s.", added,
+                     mode == LIB_MODE_ART ? "artwork" : "cheats");
+            show_brief(msg);
+            continue;
+        }
+    }
+
+    free(roms);
+}
+
 /* ── Library: System list ─────────────────────────────────── */
 
-typedef enum {
-    LIB_BACK = 0,
-    LIB_OPEN,
-    LIB_QUEUE_ART,
-    LIB_QUEUE_CHEATS,
-} lib_action;
-
-static void show_library_screen(void) {
+static void show_library_screen(library_mode mode) {
     app_settings settings = load_settings();
 
     console_dir *consoles = NULL;
@@ -175,7 +308,7 @@ static void show_library_screen(void) {
         return;
     }
 
-    /* Build menu names and compute stats */
+    /* Build menu names and compute stats, filtering by mode */
     char (*names)[512] = malloc(sizeof(char[512]) * (size_t)console_count);
     system_stats *stats = malloc(sizeof(system_stats) * (size_t)console_count);
     build_console_menu_names(consoles, console_count, names);
@@ -183,48 +316,60 @@ static void show_library_screen(void) {
     for (int i = 0; i < console_count; i++)
         stats[i] = compute_system_stats(&consoles[i], settings.show_hidden);
 
-    /* Build labels with counts */
-    char (*labels)[512] = malloc(sizeof(char[512]) * (size_t)console_count);
+    /* Filter consoles by mode and build visible list */
+    int *visible_map = malloc(sizeof(int) * (size_t)console_count);
+    int visible_count = 0;
     for (int i = 0; i < console_count; i++) {
-        char art_badge[32] = "";
-        char cht_badge[32] = "";
-        if (stats[i].has_ss)
-            snprintf(art_badge, sizeof(art_badge), "%d/%d art",
-                     stats[i].art_count, stats[i].rom_count);
-        if (stats[i].has_libretro)
-            snprintf(cht_badge, sizeof(cht_badge), "%d/%d cht",
-                     stats[i].cheat_count, stats[i].rom_count);
-
-        if (art_badge[0] && cht_badge[0])
-            snprintf(labels[i], 512, "%s   %s  %s", names[i], art_badge, cht_badge);
-        else if (art_badge[0])
-            snprintf(labels[i], 512, "%s   %s", names[i], art_badge);
-        else if (cht_badge[0])
-            snprintf(labels[i], 512, "%s   %s", names[i], cht_badge);
-        else
-            snprintf(labels[i], 512, "%s", names[i]);
+        if (mode == LIB_MODE_ART && !stats[i].has_ss) continue;
+        if (mode == LIB_MODE_CHEAT && !stats[i].has_libretro) continue;
+        visible_map[visible_count++] = i;
     }
+
+    if (visible_count <= 0) {
+        show_error(mode == LIB_MODE_ART
+            ? "No systems with artwork support found."
+            : "No systems with cheat support found.");
+        free(visible_map);
+        free(names);
+        free(stats);
+        free(consoles);
+        free_settings(&settings);
+        return;
+    }
+
+    /* Build labels with relevant badge only */
+    char (*labels)[512] = malloc(sizeof(char[512]) * (size_t)visible_count);
+    for (int vi = 0; vi < visible_count; vi++) {
+        int i = visible_map[vi];
+        if (mode == LIB_MODE_ART)
+            snprintf(labels[vi], 512, "%s   %d/%d art",
+                     names[i], stats[i].art_count, stats[i].rom_count);
+        else
+            snprintf(labels[vi], 512, "%s   %d/%d cht",
+                     names[i], stats[i].cheat_count, stats[i].rom_count);
+    }
+
+    const char *title = (mode == LIB_MODE_ART) ? "Scrape Artwork" : "Download Cheats";
+    const char *queue_all = (mode == LIB_MODE_ART) ? "Queue All Art" : "Queue All Cheats";
 
     int initial_idx = 0;
     int visible_start = 0;
 
     for (;;) {
-        ap_list_item *items = calloc((size_t)console_count, sizeof(ap_list_item));
-        for (int i = 0; i < console_count; i++)
-            items[i].label = labels[i];
+        ap_list_item *items = calloc((size_t)visible_count, sizeof(ap_list_item));
+        for (int vi = 0; vi < visible_count; vi++)
+            items[vi].label = labels[vi];
 
         ap_footer_item footer[] = {
             {AP_BTN_B, "Back", false},
             {AP_BTN_A, "Open", false},
-            {AP_BTN_Y, "Queue Art", false},
-            {AP_BTN_X, "Queue Cheats", true},
+            {AP_BTN_Y, queue_all, true},
         };
 
-        ap_list_opts opts = ap_list_default_opts("Library", items, console_count);
+        ap_list_opts opts = ap_list_default_opts(title, items, visible_count);
         opts.footer = footer;
-        opts.footer_count = 4;
+        opts.footer_count = 3;
         opts.secondary_action_button = AP_BTN_Y;
-        opts.tertiary_action_button = AP_BTN_X;
         opts.initial_index = initial_idx;
         opts.visible_start_index = visible_start;
 
@@ -235,187 +380,47 @@ static void show_library_screen(void) {
         if (ret == AP_CANCELLED) break;
 
         int sel = result.selected_index;
-        if (sel < 0 || sel >= console_count) break;
+        if (sel < 0 || sel >= visible_count) break;
 
         initial_idx = sel;
         visible_start = result.visible_start_index;
+        int real_idx = visible_map[sel];
 
         if (result.action == AP_ACTION_SECONDARY_TRIGGERED) {
-            /* Y: Queue all artwork */
+            /* Y: Queue all for this system */
             queue_set_settings(&settings);
-            int added = queue_add_all_artwork(&consoles[sel], settings.show_hidden);
+            int added;
+            if (mode == LIB_MODE_ART)
+                added = queue_add_all_artwork(&consoles[real_idx], settings.show_hidden);
+            else
+                added = queue_add_all_cheats(&consoles[real_idx], settings.show_hidden);
+
             char msg[128];
-            snprintf(msg, sizeof(msg), "Queued %d ROMs for artwork.", added);
+            snprintf(msg, sizeof(msg), "Queued %d ROMs for %s.", added,
+                     mode == LIB_MODE_ART ? "artwork" : "cheats");
             show_brief(msg);
 
-            /* Refresh stats */
-            stats[sel] = compute_system_stats(&consoles[sel], settings.show_hidden);
-            continue;
-        }
-
-        if (result.action == AP_ACTION_TERTIARY_TRIGGERED) {
-            /* X: Queue all cheats */
-            queue_set_settings(&settings);
-            int added = queue_add_all_cheats(&consoles[sel], settings.show_hidden);
-            char msg[128];
-            snprintf(msg, sizeof(msg), "Queued %d ROMs for cheats.", added);
-            show_brief(msg);
-
-            stats[sel] = compute_system_stats(&consoles[sel], settings.show_hidden);
+            /* Refresh stats for this system */
+            stats[real_idx] = compute_system_stats(&consoles[real_idx], settings.show_hidden);
+            if (mode == LIB_MODE_ART)
+                snprintf(labels[sel], 512, "%s   %d/%d art",
+                         names[real_idx], stats[real_idx].art_count, stats[real_idx].rom_count);
+            else
+                snprintf(labels[sel], 512, "%s   %d/%d cht",
+                         names[real_idx], stats[real_idx].cheat_count, stats[real_idx].rom_count);
             continue;
         }
 
         /* A: Open ROM list */
-        show_rom_list_screen(&consoles[sel], &settings);
+        show_rom_list_screen(&consoles[real_idx], &settings, mode);
     }
 
+    free(visible_map);
     free(names);
     free(labels);
     free(stats);
     free(consoles);
     free_settings(&settings);
-}
-
-/* ── Library: ROM list ────────────────────────────────────── */
-
-static const char *rom_status_text(const rom_file *rom, const console_dir *console) {
-    bool has_art = artwork_exists(rom->path, rom->display);
-    bool has_cht = cheat_exists(console->tag, rom->display);
-
-    /* Check queue status */
-    queue_item_status art_qs = queue_get_rom_status(rom->path, QUEUE_TYPE_ARTWORK);
-    queue_item_status cht_qs = queue_get_rom_status(rom->path, QUEUE_TYPE_CHEAT);
-
-    bool art_queued = (art_qs >= QUEUE_IDLE && art_qs <= QUEUE_DOWNLOADING);
-    bool cht_queued = (cht_qs >= QUEUE_IDLE && cht_qs <= QUEUE_MATCHING);
-
-    /* Active queue statuses take priority */
-    if (art_queued || cht_queued) {
-        queue_item_status active = art_queued ? art_qs : cht_qs;
-        switch (active) {
-        case QUEUE_IDLE:        return "Queued";
-        case QUEUE_SEARCHING:   return "Searching...";
-        case QUEUE_DOWNLOADING: return "Downloading...";
-        case QUEUE_CLONING:     return "Cloning...";
-        case QUEUE_MATCHING:    return "Matching...";
-        default:                return "Queued";
-        }
-    }
-
-    if (has_art && has_cht) return "art + cht";
-    if (has_art)            return "art";
-    if (has_cht)            return "cht";
-    return "-";
-}
-
-static void show_rom_list_screen(const console_dir *console,
-                                  const app_settings *settings) {
-    rom_file *roms = NULL;
-    int rom_count = scan_roms(console->path, settings->show_hidden, &roms);
-    if (rom_count <= 0) {
-        show_error("No ROMs found in this system.");
-        free(roms);
-        return;
-    }
-
-    int initial_idx = 0;
-    int visible_start = 0;
-
-    for (;;) {
-        /* Build options list items */
-        ap_option *status_opts = calloc((size_t)rom_count, sizeof(ap_option));
-        ap_options_item *items = calloc((size_t)rom_count, sizeof(ap_options_item));
-        char (*status_labels)[64] = malloc(sizeof(char[64]) * (size_t)rom_count);
-
-        for (int i = 0; i < rom_count; i++) {
-            const char *status = rom_status_text(&roms[i], console);
-            snprintf(status_labels[i], 64, "%s", status);
-            status_opts[i].label = status_labels[i];
-            status_opts[i].value = status_labels[i];
-
-            items[i].label = roms[i].display;
-            items[i].type = AP_OPT_CLICKABLE;
-            items[i].options = &status_opts[i];
-            items[i].option_count = 1;
-            items[i].selected_option = 0;
-        }
-
-        ap_footer_item footer[] = {
-            {AP_BTN_B, "Back", false},
-            {AP_BTN_A, "Queue Art", false},
-            {AP_BTN_Y, "Queue All", false},
-            {AP_BTN_START, "Queue Cheat", true},
-        };
-
-        char title[256];
-        snprintf(title, sizeof(title), "%s", console->display);
-
-        ap_options_list_opts opts = {
-            .title = title,
-            .items = items,
-            .item_count = rom_count,
-            .footer = footer,
-            .footer_count = 4,
-            .action_button = AP_BTN_A,
-            .secondary_action_button = AP_BTN_Y,
-            .confirm_button = AP_BTN_START,
-            .initial_selected_index = initial_idx,
-            .visible_start_index = visible_start,
-        };
-
-        ap_options_list_result result;
-        int ret = ap_options_list(&opts, &result);
-
-        initial_idx = result.focused_index;
-        visible_start = result.visible_start_index;
-
-        free(status_opts);
-        free(items);
-        free(status_labels);
-
-        if (ret == AP_CANCELLED) break;
-
-        int sel = result.focused_index;
-        if (sel < 0 || sel >= rom_count) break;
-
-        if (result.action == AP_ACTION_SELECTED || result.action == AP_ACTION_TRIGGERED) {
-            /* A: Queue artwork for this ROM */
-            queue_set_settings(settings);
-            if (queue_add_artwork(&roms[sel], console)) {
-                char msg[256];
-                snprintf(msg, sizeof(msg), "Queued \"%s\" for artwork.", roms[sel].display);
-                show_brief(msg);
-            } else {
-                show_brief("Already queued or artwork exists.");
-            }
-            continue;
-        }
-
-        if (result.action == AP_ACTION_SECONDARY_TRIGGERED) {
-            /* Y: Queue all missing artwork + cheats */
-            queue_set_settings(settings);
-            int art = queue_add_all_artwork(console, settings->show_hidden);
-            int cht = queue_add_all_cheats(console, settings->show_hidden);
-            char msg[256];
-            snprintf(msg, sizeof(msg), "Queued %d art + %d cheats.", art, cht);
-            show_brief(msg);
-            continue;
-        }
-
-        if (result.action == AP_ACTION_CONFIRMED) {
-            queue_set_settings(settings);
-            if (queue_add_cheat(&roms[sel], console)) {
-                char msg[256];
-                snprintf(msg, sizeof(msg), "Queued \"%s\" for cheats.", roms[sel].display);
-                show_brief(msg);
-            } else {
-                show_brief("Already queued or cheat exists.");
-            }
-            continue;
-        }
-    }
-
-    free(roms);
 }
 
 /* ── Progress screen (custom render loop) ─────────────────── */
@@ -462,6 +467,17 @@ static void show_progress_screen(void) {
     for (;;) {
         bool can_clear = !queue_is_active();
 
+        /* Compute layout early so visible_rows is available for page-skip */
+        const ap_theme *theme = ap_get_theme();
+        TTF_Font *font_large = ap_get_font(AP_FONT_LARGE);
+        TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
+        TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
+        int screen_w = ap_get_screen_width();
+        SDL_Rect content = ap_get_content_rect(true, true, false);
+        int row_height = TTF_FontHeight(font_large) + TTF_FontHeight(font_tiny) + ap_scale(6);
+        int visible_rows = content.h / row_height;
+        if (visible_rows < 1) visible_rows = 1;
+
         /* Handle input */
         ap_input_event ev;
         bool quit = false;
@@ -469,10 +485,14 @@ static void show_progress_screen(void) {
         while (ap_poll_input(&ev)) {
             if (!ev.pressed) continue;
             switch (ev.button) {
-            case AP_BTN_B:    quit = true; break;
-            case AP_BTN_X:    clear = true; break;
-            case AP_BTN_DOWN: selected++; break;
-            case AP_BTN_UP:   selected--; break;
+            case AP_BTN_B:     quit = true; break;
+            case AP_BTN_X:     clear = true; break;
+            case AP_BTN_DOWN:  selected++; break;
+            case AP_BTN_UP:    selected--; break;
+            case AP_BTN_L1:    /* fall through */
+            case AP_BTN_LEFT:  selected -= visible_rows; break;
+            case AP_BTN_R1:    /* fall through */
+            case AP_BTN_RIGHT: selected += visible_rows; break;
             default: break;
             }
         }
@@ -493,13 +513,6 @@ static void show_progress_screen(void) {
             if (selected >= count) selected = count - 1;
         }
 
-        /* Layout */
-        const ap_theme *theme = ap_get_theme();
-        TTF_Font *font_large = ap_get_font(AP_FONT_LARGE);
-        TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
-        TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
-        int screen_w = ap_get_screen_width();
-
         ap_draw_background();
         ap_draw_screen_title("Progress", NULL);
 
@@ -509,12 +522,6 @@ static void show_progress_screen(void) {
             {AP_BTN_X, can_clear ? "Clear Done" : "Clear When Idle", true},
         };
         ap_draw_footer(footer, 2);
-
-        /* Content area */
-        SDL_Rect content = ap_get_content_rect(true, true, false);
-        int row_height = TTF_FontHeight(font_large) + TTF_FontHeight(font_tiny) + ap_scale(6);
-        int visible_rows = content.h / row_height;
-        if (visible_rows < 1) visible_rows = 1;
 
         /* Adjust scroll to keep selection visible */
         if (selected < scroll_offset)
@@ -796,14 +803,34 @@ static void edit_artwork_options(app_settings *settings) {
 /* ── Clear cheat cache ────────────────────────────────────── */
 
 static int clear_cache_worker(void *userdata) {
-    (void)userdata;
+    float *progress = (float *)userdata;
     char repo[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
 
     DIR *dir = opendir(repo);
-    if (!dir) return 0;
+    if (!dir) {
+        if (progress) *progress = 1.0f;
+        return 0;
+    }
 
+    /* Count entries first for progress tracking */
+    int total = 0;
     struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        total++;
+    }
+    rewinddir(dir);
+
+    if (total == 0) {
+        closedir(dir);
+        rmdir(repo);
+        if (progress) *progress = 1.0f;
+        return 0;
+    }
+
+    int done = 0;
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
@@ -817,9 +844,12 @@ static int clear_cache_worker(void *userdata) {
         } else {
             unlink(path);
         }
+        done++;
+        if (progress) *progress = (float)done / (float)total;
     }
     closedir(dir);
     rmdir(repo);
+    if (progress) *progress = 1.0f;
     return 0;
 }
 
@@ -849,7 +879,7 @@ static void clear_cheat_cache(void) {
         .show_progress = true,
         .progress = &progress,
     };
-    ap_process_message(&proc_opts, clear_cache_worker, NULL);
+    ap_process_message(&proc_opts, clear_cache_worker, &progress);
 }
 
 /* ── Settings screen ──────────────────────────────────────── */
@@ -947,9 +977,10 @@ void run_app(void) {
     for (;;) {
         main_action action = show_main_menu();
         switch (action) {
-        case MAIN_LIBRARY:   show_library_screen(); break;
-        case MAIN_PROGRESS:  show_progress_screen(); break;
-        case MAIN_SETTINGS:  show_settings_screen(); break;
+        case MAIN_SCRAPE_ART:      show_library_screen(LIB_MODE_ART); break;
+        case MAIN_DOWNLOAD_CHEATS: show_library_screen(LIB_MODE_CHEAT); break;
+        case MAIN_PROGRESS:        show_progress_screen(); break;
+        case MAIN_SETTINGS:        show_settings_screen(); break;
         case MAIN_QUIT: {
             queue_stats stats = queue_get_stats();
             if (stats.pending > 0) {

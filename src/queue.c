@@ -510,6 +510,17 @@ static void process_artwork_batch(app_settings *settings) {
     g_artwork_work.artwork_item_count = 0;
 }
 
+/* Cheat worker thread — runs in parallel with artwork batch */
+static void *cheat_thread_fn(void *arg) {
+    app_settings *settings = (app_settings *)arg;
+    while (!atomic_load(&g_interrupt)) {
+        int idx = find_next_cheat_index();
+        if (idx < 0) break;
+        process_cheat_item(idx, settings);
+    }
+    return NULL;
+}
+
 static void *manager_thread_fn(void *arg) {
     (void)arg;
 
@@ -528,26 +539,35 @@ static void *manager_thread_fn(void *arg) {
 
         app_settings settings = copy_settings();
 
+        /* Check what types of work are pending */
         bool has_idle_artwork = false;
+        bool has_idle_cheats = false;
         pthread_mutex_lock(&g_mutex);
         for (int i = 0; i < g_count; i++) {
-            if (g_items[i].type == QUEUE_TYPE_ARTWORK &&
-                g_items[i].status == QUEUE_IDLE) {
-                has_idle_artwork = true;
-                break;
+            if (g_items[i].status == QUEUE_IDLE) {
+                if (g_items[i].type == QUEUE_TYPE_ARTWORK)
+                    has_idle_artwork = true;
+                if (g_items[i].type == QUEUE_TYPE_CHEAT)
+                    has_idle_cheats = true;
             }
         }
         pthread_mutex_unlock(&g_mutex);
 
+        /* Start cheat processing in parallel with artwork */
+        pthread_t cheat_thread = 0;
+        bool cheat_started = false;
+        if (has_idle_cheats && !atomic_load(&g_interrupt)) {
+            if (pthread_create(&cheat_thread, NULL, cheat_thread_fn, &settings) == 0)
+                cheat_started = true;
+        }
+
+        /* Process artwork batch (blocks until done) */
         if (has_idle_artwork && !atomic_load(&g_interrupt))
             process_artwork_batch(&settings);
 
-        while (!atomic_load(&g_interrupt)) {
-            int cheat_index = find_next_cheat_index();
-            if (cheat_index < 0)
-                break;
-            process_cheat_item(cheat_index, &settings);
-        }
+        /* Wait for cheat thread to finish */
+        if (cheat_started)
+            pthread_join(cheat_thread, NULL);
 
         free_settings_copy(&settings);
     }
