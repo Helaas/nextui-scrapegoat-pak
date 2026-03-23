@@ -5,6 +5,7 @@
 
 #include <limits.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,6 +95,24 @@ static void set_item_status(int index, queue_item_status status) {
     pthread_mutex_lock(&g_mutex);
     if (index >= 0 && index < g_count) {
         g_items[index].status = status;
+        set_dirty_locked();
+    }
+    pthread_mutex_unlock(&g_mutex);
+}
+
+static void set_item_error(int index, queue_item_status status,
+                           const char *fmt, ...) {
+    char msg[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, args);
+    va_end(args);
+
+    pthread_mutex_lock(&g_mutex);
+    if (index >= 0 && index < g_count) {
+        g_items[index].status = status;
+        snprintf(g_items[index].error_msg, sizeof(g_items[index].error_msg),
+                 "%s", msg);
         set_dirty_locked();
     }
     pthread_mutex_unlock(&g_mutex);
@@ -228,7 +247,9 @@ static void *artwork_worker_fn(void *arg) {
             continue;
         }
         if (search_ret != 0) {
-            set_item_status(queue_index, QUEUE_ERROR);
+            const char *err = ss_get_last_error();
+            set_item_error(queue_index, QUEUE_ERROR,
+                           "%s", err ? err : "Search failed");
             continue;
         }
 
@@ -243,8 +264,11 @@ static void *artwork_worker_fn(void *arg) {
             break;
         if (download_ret == 0)
             set_item_status(queue_index, QUEUE_DONE);
-        else
-            set_item_status(queue_index, QUEUE_ERROR);
+        else {
+            const char *err = ss_get_last_error();
+            set_item_error(queue_index, QUEUE_ERROR,
+                           "%s", err ? err : "Download failed");
+        }
     }
 
     return NULL;
@@ -326,7 +350,8 @@ static void process_cheat_item(int queue_index, app_settings *settings) {
         return;
 
     if (!libretro_dir(item.system_tag)) {
-        set_item_status(queue_index, QUEUE_ERROR);
+        set_item_error(queue_index, QUEUE_ERROR,
+                       "No libretro mapping for system '%s'", item.system_tag);
         return;
     }
 
@@ -338,7 +363,9 @@ static void process_cheat_item(int queue_index, app_settings *settings) {
     cheat_list *list = ensure_cheat_list(item.system_tag, &g_interrupt);
     if (!list || atomic_load(&g_interrupt)) {
         if (!atomic_load(&g_interrupt))
-            set_item_status(queue_index, QUEUE_ERROR);
+            set_item_error(queue_index, QUEUE_ERROR,
+                           "Failed to build cheat list for '%s'",
+                           item.system_tag);
         return;
     }
 
@@ -347,7 +374,8 @@ static void process_cheat_item(int queue_index, app_settings *settings) {
     int region_count = 0;
     char **region_prio = build_region_types(settings, &region_count);
     if (!region_prio) {
-        set_item_status(queue_index, QUEUE_ERROR);
+        set_item_error(queue_index, QUEUE_ERROR,
+                       "Failed to build region priority list");
         return;
     }
 
@@ -370,7 +398,8 @@ static void process_cheat_item(int queue_index, app_settings *settings) {
     if (copy_cheat_file(src_path, dest_path) == 0)
         set_item_status(queue_index, QUEUE_DONE);
     else
-        set_item_status(queue_index, QUEUE_ERROR);
+        set_item_error(queue_index, QUEUE_ERROR,
+                       "Failed to copy cheat file");
 
     for (int i = 0; i < region_count; i++)
         free(region_prio[i]);
@@ -419,7 +448,8 @@ static void process_artwork_batch(app_settings *settings) {
 
     if (!g_artwork_work.artwork_types || !g_artwork_work.region_prio) {
         for (int i = 0; i < art_count; i++)
-            set_item_status(indices[i], QUEUE_ERROR);
+            set_item_error(indices[i], QUEUE_ERROR,
+                           "Failed to build artwork/region settings");
 
         for (int i = 0; i < g_artwork_work.artwork_count; i++)
             free(g_artwork_work.artwork_types[i]);
@@ -463,12 +493,16 @@ static void process_artwork_batch(app_settings *settings) {
                                       result.media_url, dest) == 0) {
                     set_item_status(first_index, QUEUE_DONE);
                 } else {
-                    set_item_status(first_index, QUEUE_ERROR);
+                    const char *err = ss_get_last_error();
+                    set_item_error(first_index, QUEUE_ERROR,
+                                   "%s", err ? err : "Download failed");
                 }
             } else if (ret == 1) {
                 set_item_status(first_index, QUEUE_NOT_FOUND);
             } else if (ret != -2) {
-                set_item_status(first_index, QUEUE_ERROR);
+                const char *err = ss_get_last_error();
+                set_item_error(first_index, QUEUE_ERROR,
+                               "%s", err ? err : "Search failed");
             }
         }
         atomic_store(&g_artwork_work.next_index, 1);

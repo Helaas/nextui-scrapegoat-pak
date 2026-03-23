@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* Suppress GCC warnings about snprintf truncation when combining
    PATH_MAX-sized strings — truncation is safe by design.
@@ -460,6 +461,125 @@ static ap_color status_color(queue_item_status status, const ap_theme *theme) {
     }
 }
 
+static bool is_item_terminal(queue_item_status status) {
+    return status == QUEUE_DONE || status == QUEUE_SKIPPED ||
+           status == QUEUE_ERROR || status == QUEUE_NOT_FOUND;
+}
+
+static void show_item_detail(const queue_item *item) {
+    bool is_error = (item->status == QUEUE_ERROR ||
+                     item->status == QUEUE_NOT_FOUND);
+    bool is_cheat = (item->type == QUEUE_TYPE_CHEAT);
+
+    ap_detail_section sections[3];
+    int section_count = 0;
+
+    /* Info section: status + system */
+    const char *status_str = queue_status_text(item->status);
+    const char *type_str = is_cheat ? "Cheat" : "Artwork";
+    ap_detail_info_pair info_pairs[] = {
+        {"Status", status_str},
+        {"System", item->system_display},
+        {"Type", type_str},
+    };
+    sections[section_count] = (ap_detail_section){
+        .type = AP_SECTION_INFO,
+        .title = NULL,
+        .info_pairs = info_pairs,
+        .info_count = 3,
+    };
+    section_count++;
+
+    /* Error detail */
+    char *cheat_text = NULL;
+    char art_path[PATH_MAX] = {0};
+    char cheat_title[64] = {0};
+
+    if (is_error) {
+        const char *msg = item->error_msg[0] ? item->error_msg :
+                          (item->status == QUEUE_NOT_FOUND ? "Not found in database" :
+                           "An unknown error occurred");
+        sections[section_count] = (ap_detail_section){
+            .type = AP_SECTION_DESCRIPTION,
+            .title = "Error",
+            .description = msg,
+        };
+        section_count++;
+    } else if (is_cheat) {
+        /* Parse and display cheat descriptions */
+        char cheats_base[PATH_MAX];
+        char cht_path[PATH_MAX];
+        get_cheats_path(cheats_base, sizeof(cheats_base));
+        snprintf(cht_path, sizeof(cht_path), "%s/%s/%s.cht",
+                 cheats_base, item->system_tag, item->rom_display);
+
+        cheat_desc_list descs;
+        if (parse_cheat_descriptions(cht_path, &descs) == 0 && descs.count > 0) {
+            /* Build a single string with one cheat per line */
+            size_t total_len = 0;
+            for (int i = 0; i < descs.count; i++) {
+                if (descs.descriptions[i])
+                    total_len += strlen(descs.descriptions[i]) + 1;
+            }
+            cheat_text = malloc(total_len + 1);
+            if (cheat_text) {
+                cheat_text[0] = '\0';
+                for (int i = 0; i < descs.count; i++) {
+                    if (!descs.descriptions[i]) continue;
+                    if (cheat_text[0] != '\0')
+                        strcat(cheat_text, "\n");
+                    strcat(cheat_text, descs.descriptions[i]);
+                }
+            }
+            cheat_desc_list_free(&descs);
+
+            if (cheat_text && cheat_text[0]) {
+                int cheat_count = 0;
+                for (const char *p = cheat_text; *p; p++)
+                    if (*p == '\n') cheat_count++;
+                cheat_count++; /* last line has no newline */
+                snprintf(cheat_title, sizeof(cheat_title), "Cheats (%d)", cheat_count);
+                sections[section_count] = (ap_detail_section){
+                    .type = AP_SECTION_DESCRIPTION,
+                    .title = cheat_title,
+                    .description = cheat_text,
+                };
+                section_count++;
+            }
+        }
+    } else {
+        /* Artwork: show the image */
+        artwork_src_path(item->rom_path, item->rom_display,
+                         art_path, sizeof(art_path));
+        struct stat st;
+        if (stat(art_path, &st) == 0) {
+            sections[section_count] = (ap_detail_section){
+                .type = AP_SECTION_IMAGE,
+                .title = NULL,
+                .image_path = art_path,
+            };
+            section_count++;
+        }
+    }
+
+    ap_footer_item footer[] = {
+        {AP_BTN_B, "Back", false},
+    };
+
+    ap_detail_opts opts = {
+        .title = item->rom_display,
+        .sections = sections,
+        .section_count = section_count,
+        .footer = footer,
+        .footer_count = 1,
+    };
+
+    ap_detail_result result;
+    ap_detail_screen(&opts, &result);
+
+    free(cheat_text);
+}
+
 static void show_progress_screen(void) {
     int selected = 0;
     int scroll_offset = 0;
@@ -482,9 +602,11 @@ static void show_progress_screen(void) {
         ap_input_event ev;
         bool quit = false;
         bool clear = false;
+        bool show_detail = false;
         while (ap_poll_input(&ev)) {
             if (!ev.pressed) continue;
             switch (ev.button) {
+            case AP_BTN_A:     show_detail = true; break;
             case AP_BTN_B:     quit = true; break;
             case AP_BTN_X:     clear = true; break;
             case AP_BTN_DOWN:  selected++; break;
@@ -513,15 +635,26 @@ static void show_progress_screen(void) {
             if (selected >= count) selected = count - 1;
         }
 
+        /* Show detail for selected item */
+        bool selected_is_terminal = count > 0 &&
+            is_item_terminal(items[selected].status);
+        if (show_detail && selected_is_terminal) {
+            show_item_detail(&items[selected]);
+            free(items);
+            continue;
+        }
+
         ap_draw_background();
         ap_draw_screen_title("Progress", NULL);
 
         /* Footer */
-        ap_footer_item footer[] = {
-            {AP_BTN_B, "Back", false},
-            {AP_BTN_X, can_clear ? "Clear Done" : "Clear When Idle", true},
-        };
-        ap_draw_footer(footer, 2);
+        ap_footer_item footer[3];
+        int footer_count = 0;
+        if (selected_is_terminal)
+            footer[footer_count++] = (ap_footer_item){AP_BTN_A, "Details", false};
+        footer[footer_count++] = (ap_footer_item){AP_BTN_B, "Back", false};
+        footer[footer_count++] = (ap_footer_item){AP_BTN_X, can_clear ? "Clear Done" : "Clear When Idle", true};
+        ap_draw_footer(footer, footer_count);
 
         /* Adjust scroll to keep selection visible */
         if (selected < scroll_offset)

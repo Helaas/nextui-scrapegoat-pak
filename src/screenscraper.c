@@ -58,6 +58,10 @@ static const char *ss_last_error_message(void) {
     return g_ss_last_error[0] ? g_ss_last_error : NULL;
 }
 
+const char *ss_get_last_error(void) {
+    return ss_last_error_message();
+}
+
 /* ── cURL helpers ─────────────────────────────────────────── */
 
 typedef struct {

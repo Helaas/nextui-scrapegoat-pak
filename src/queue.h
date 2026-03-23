@@ -39,6 +39,7 @@ typedef struct {
     char                      console_path[PATH_MAX];
     int                       system_id;   /* ScreenScraper ID, -1 if no SS mapping */
     queue_item_status         status;
+    char                      error_msg[256];
 } queue_item;
 
 typedef struct {

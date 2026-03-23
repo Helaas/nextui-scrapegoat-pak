@@ -949,3 +949,82 @@ cleanup:
 
     return result;
 }
+
+/* ── Cheat description parsing ───────────────────────────── */
+
+/* Parse a quoted string value from a line like: cheatN_desc = "value"
+ * Writes into buf, returns 0 on success. */
+static int parse_cht_string(const char *line, char *buf, size_t buflen) {
+    const char *q1 = strchr(line, '"');
+    if (!q1) return -1;
+    q1++;
+    const char *q2 = strrchr(q1, '"');
+    if (!q2 || q2 <= q1) return -1;
+    size_t len = (size_t)(q2 - q1);
+    if (len >= buflen) len = buflen - 1;
+    memcpy(buf, q1, len);
+    buf[len] = '\0';
+    return 0;
+}
+
+int parse_cheat_descriptions(const char *cht_path, cheat_desc_list *out) {
+    if (!cht_path || !out) return -1;
+    memset(out, 0, sizeof(*out));
+
+    FILE *f = fopen(cht_path, "r");
+    if (!f) return -1;
+
+    char line[512];
+    int total = 0;
+
+    /* First pass: find cheat count */
+    while (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, " cheats = %d", &total) == 1)
+            break;
+    }
+
+    if (total <= 0) {
+        fclose(f);
+        return -1;
+    }
+
+    out->descriptions = calloc((size_t)total, sizeof(char *));
+    if (!out->descriptions) {
+        fclose(f);
+        return -1;
+    }
+
+    /* Second pass: extract descriptions */
+    rewind(f);
+    while (fgets(line, sizeof(line), f)) {
+        int idx = -1;
+        if (sscanf(line, " cheat%d_desc", &idx) != 1)
+            continue;
+        if (idx < 0 || idx >= total)
+            continue;
+
+        char buf[512];
+        if (parse_cht_string(line, buf, sizeof(buf)) != 0)
+            continue;
+
+        if (buf[0] == '\0')
+            continue;
+
+        out->descriptions[idx] = strdup(buf);
+    }
+
+    fclose(f);
+
+    /* Count how many were actually found */
+    out->count = total;
+    return 0;
+}
+
+void cheat_desc_list_free(cheat_desc_list *out) {
+    if (!out) return;
+    for (int i = 0; i < out->count; i++)
+        free(out->descriptions[i]);
+    free(out->descriptions);
+    out->descriptions = NULL;
+    out->count = 0;
+}

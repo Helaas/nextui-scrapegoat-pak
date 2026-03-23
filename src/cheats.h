@@ -103,4 +103,16 @@ const char *match_cheat(const char *rom_display, cheat_list *list,
 /* Copy a cheat file from src to dst with temp+rename safety. */
 int copy_cheat_file(const char *src, const char *dst);
 
+/* ── Cheat description parsing ───────────────────────────── */
+
+typedef struct {
+    char **descriptions;
+    int    count;
+} cheat_desc_list;
+
+/* Parse cheat descriptions from a .cht file.
+ * Returns 0 on success, -1 on error. Caller must free with cheat_desc_list_free. */
+int parse_cheat_descriptions(const char *cht_path, cheat_desc_list *out);
+void cheat_desc_list_free(cheat_desc_list *out);
+
 #endif /* CHEATS_H */

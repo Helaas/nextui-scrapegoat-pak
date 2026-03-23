@@ -81,6 +81,11 @@ run_result scrape_console(const console_dir *console, bool missing_only,
                           progress_fn set_progress,
                           message_fn set_message);
 
+/* ── Error access ─────────────────────────────────────────── */
+
+/* Returns the last error message for the calling thread, or NULL. */
+const char *ss_get_last_error(void);
+
 /* ── Utilities ────────────────────────────────────────────── */
 
 /* Format a time duration into a short ETA string (e.g. "2m30s"). */
