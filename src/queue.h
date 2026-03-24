@@ -40,6 +40,7 @@ typedef struct {
     int                       system_id;   /* ScreenScraper ID, -1 if no SS mapping */
     queue_item_status         status;
     char                      error_msg[256];
+    bool                      force;       /* Re-download even if asset already exists */
 } queue_item;
 
 typedef struct {
@@ -67,6 +68,18 @@ int queue_add_all_artwork(const console_dir *console, bool show_hidden);
 
 /* Add all missing cheats for a console. Returns count added. */
 int queue_add_all_cheats(const console_dir *console, bool show_hidden);
+
+/* Force-add artwork even if already exists (for re-download). Returns true if added. */
+bool queue_add_artwork_forced(const rom_file *rom, const console_dir *console);
+
+/* Force-add cheat even if already exists (for re-download). Returns true if added. */
+bool queue_add_cheat_forced(const rom_file *rom, const console_dir *console);
+
+/* Force re-add all artwork for a console (re-download existing too). Returns count added. */
+int queue_add_all_artwork_forced(const console_dir *console, bool show_hidden);
+
+/* Force re-add all cheats for a console (re-download existing too). Returns count added. */
+int queue_add_all_cheats_forced(const console_dir *console, bool show_hidden);
 
 /* ── Querying ─────────────────────────────────────────────── */
 

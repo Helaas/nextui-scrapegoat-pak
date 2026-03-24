@@ -355,7 +355,7 @@ static void process_cheat_item(int queue_index, app_settings *settings) {
         return;
     }
 
-    if (cheat_exists(item.system_tag, item.rom_display)) {
+    if (!item.force && cheat_exists(item.system_tag, item.rom_display)) {
         set_item_status(queue_index, QUEUE_SKIPPED);
         return;
     }
@@ -711,81 +711,16 @@ void queue_set_settings(const app_settings *settings) {
     pthread_mutex_unlock(&g_settings_mutex);
 }
 
+/* Forward declarations for internal helpers defined below */
+static bool queue_add_artwork_internal(const rom_file *rom, const console_dir *console, bool force);
+static bool queue_add_cheat_internal(const rom_file *rom, const console_dir *console, bool force);
+
 bool queue_add_artwork(const rom_file *rom, const console_dir *console) {
-    int system_id = ss_platform_id(console->tag);
-    if (system_id < 0)
-        return false;
-    if (artwork_exists(rom->path, rom->display))
-        return false;
-
-    pthread_mutex_lock(&g_mutex);
-    for (int i = 0; i < g_count; i++) {
-        if (g_items[i].type == QUEUE_TYPE_ARTWORK &&
-            strcmp(g_items[i].rom_path, rom->path) == 0 &&
-            !is_terminal_status(g_items[i].status)) {
-            pthread_mutex_unlock(&g_mutex);
-            return false;
-        }
-    }
-
-    if (g_count >= QUEUE_MAX_ITEMS) {
-        pthread_mutex_unlock(&g_mutex);
-        return false;
-    }
-
-    queue_item *item = &g_items[g_count++];
-    memset(item, 0, sizeof(*item));
-    item->type = QUEUE_TYPE_ARTWORK;
-    snprintf(item->rom_display, sizeof(item->rom_display), "%s", rom->display);
-    snprintf(item->rom_path, sizeof(item->rom_path), "%s", rom->path);
-    snprintf(item->system_tag, sizeof(item->system_tag), "%s", console->tag);
-    snprintf(item->system_display, sizeof(item->system_display), "%s", console->display);
-    snprintf(item->console_path, sizeof(item->console_path), "%s", console->path);
-    item->system_id = system_id;
-    item->status = QUEUE_IDLE;
-    set_dirty_locked();
-    pthread_mutex_unlock(&g_mutex);
-
-    ensure_manager_started();
-    return true;
+    return queue_add_artwork_internal(rom, console, false);
 }
 
 bool queue_add_cheat(const rom_file *rom, const console_dir *console) {
-    if (!libretro_dir(console->tag))
-        return false;
-    if (cheat_exists(console->tag, rom->display))
-        return false;
-
-    pthread_mutex_lock(&g_mutex);
-    for (int i = 0; i < g_count; i++) {
-        if (g_items[i].type == QUEUE_TYPE_CHEAT &&
-            strcmp(g_items[i].rom_path, rom->path) == 0 &&
-            !is_terminal_status(g_items[i].status)) {
-            pthread_mutex_unlock(&g_mutex);
-            return false;
-        }
-    }
-
-    if (g_count >= QUEUE_MAX_ITEMS) {
-        pthread_mutex_unlock(&g_mutex);
-        return false;
-    }
-
-    queue_item *item = &g_items[g_count++];
-    memset(item, 0, sizeof(*item));
-    item->type = QUEUE_TYPE_CHEAT;
-    snprintf(item->rom_display, sizeof(item->rom_display), "%s", rom->display);
-    snprintf(item->rom_path, sizeof(item->rom_path), "%s", rom->path);
-    snprintf(item->system_tag, sizeof(item->system_tag), "%s", console->tag);
-    snprintf(item->system_display, sizeof(item->system_display), "%s", console->display);
-    snprintf(item->console_path, sizeof(item->console_path), "%s", console->path);
-    item->system_id = ss_platform_id(console->tag);
-    item->status = QUEUE_IDLE;
-    set_dirty_locked();
-    pthread_mutex_unlock(&g_mutex);
-
-    ensure_manager_started();
-    return true;
+    return queue_add_cheat_internal(rom, console, false);
 }
 
 int queue_add_all_artwork(const console_dir *console, bool show_hidden) {
@@ -817,6 +752,135 @@ int queue_add_all_cheats(const console_dir *console, bool show_hidden) {
     int added = 0;
     for (int i = 0; i < rom_count; i++) {
         if (queue_add_cheat(&roms[i], console))
+            added++;
+    }
+
+    free(roms);
+    return added;
+}
+
+/* ── Forced queue functions (re-download existing) ───────── */
+
+static bool queue_add_artwork_internal(const rom_file *rom,
+                                        const console_dir *console,
+                                        bool force) {
+    int system_id = ss_platform_id(console->tag);
+    if (system_id < 0)
+        return false;
+    if (!force && artwork_exists(rom->path, rom->display))
+        return false;
+
+    pthread_mutex_lock(&g_mutex);
+    for (int i = 0; i < g_count; i++) {
+        if (g_items[i].type == QUEUE_TYPE_ARTWORK &&
+            strcmp(g_items[i].rom_path, rom->path) == 0 &&
+            !is_terminal_status(g_items[i].status)) {
+            pthread_mutex_unlock(&g_mutex);
+            return false;
+        }
+    }
+
+    if (g_count >= QUEUE_MAX_ITEMS) {
+        pthread_mutex_unlock(&g_mutex);
+        return false;
+    }
+
+    queue_item *item = &g_items[g_count++];
+    memset(item, 0, sizeof(*item));
+    item->type = QUEUE_TYPE_ARTWORK;
+    snprintf(item->rom_display, sizeof(item->rom_display), "%s", rom->display);
+    snprintf(item->rom_path, sizeof(item->rom_path), "%s", rom->path);
+    snprintf(item->system_tag, sizeof(item->system_tag), "%s", console->tag);
+    snprintf(item->system_display, sizeof(item->system_display), "%s", console->display);
+    snprintf(item->console_path, sizeof(item->console_path), "%s", console->path);
+    item->system_id = system_id;
+    item->status    = QUEUE_IDLE;
+    item->force     = force;
+    set_dirty_locked();
+    pthread_mutex_unlock(&g_mutex);
+
+    ensure_manager_started();
+    return true;
+}
+
+static bool queue_add_cheat_internal(const rom_file *rom,
+                                      const console_dir *console,
+                                      bool force) {
+    if (!libretro_dir(console->tag))
+        return false;
+    if (!force && cheat_exists(console->tag, rom->display))
+        return false;
+
+    pthread_mutex_lock(&g_mutex);
+    for (int i = 0; i < g_count; i++) {
+        if (g_items[i].type == QUEUE_TYPE_CHEAT &&
+            strcmp(g_items[i].rom_path, rom->path) == 0 &&
+            !is_terminal_status(g_items[i].status)) {
+            pthread_mutex_unlock(&g_mutex);
+            return false;
+        }
+    }
+
+    if (g_count >= QUEUE_MAX_ITEMS) {
+        pthread_mutex_unlock(&g_mutex);
+        return false;
+    }
+
+    queue_item *item = &g_items[g_count++];
+    memset(item, 0, sizeof(*item));
+    item->type = QUEUE_TYPE_CHEAT;
+    snprintf(item->rom_display, sizeof(item->rom_display), "%s", rom->display);
+    snprintf(item->rom_path, sizeof(item->rom_path), "%s", rom->path);
+    snprintf(item->system_tag, sizeof(item->system_tag), "%s", console->tag);
+    snprintf(item->system_display, sizeof(item->system_display), "%s", console->display);
+    snprintf(item->console_path, sizeof(item->console_path), "%s", console->path);
+    item->system_id = ss_platform_id(console->tag);
+    item->status    = QUEUE_IDLE;
+    item->force     = force;
+    set_dirty_locked();
+    pthread_mutex_unlock(&g_mutex);
+
+    ensure_manager_started();
+    return true;
+}
+
+bool queue_add_artwork_forced(const rom_file *rom, const console_dir *console) {
+    return queue_add_artwork_internal(rom, console, true);
+}
+
+bool queue_add_cheat_forced(const rom_file *rom, const console_dir *console) {
+    return queue_add_cheat_internal(rom, console, true);
+}
+
+int queue_add_all_artwork_forced(const console_dir *console, bool show_hidden) {
+    rom_file *roms = NULL;
+    int rom_count = scan_roms(console->path, show_hidden, &roms);
+    if (rom_count <= 0) {
+        free(roms);
+        return 0;
+    }
+
+    int added = 0;
+    for (int i = 0; i < rom_count; i++) {
+        if (queue_add_artwork_internal(&roms[i], console, true))
+            added++;
+    }
+
+    free(roms);
+    return added;
+}
+
+int queue_add_all_cheats_forced(const console_dir *console, bool show_hidden) {
+    rom_file *roms = NULL;
+    int rom_count = scan_roms(console->path, show_hidden, &roms);
+    if (rom_count <= 0) {
+        free(roms);
+        return 0;
+    }
+
+    int added = 0;
+    for (int i = 0; i < rom_count; i++) {
+        if (queue_add_cheat_internal(&roms[i], console, true))
             added++;
     }
 

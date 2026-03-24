@@ -163,6 +163,20 @@ static main_action show_main_menu(void) {
 
 /* ── Library: ROM list ────────────────────────────────────── */
 
+typedef enum {
+    ROM_FILTER_ALL = 0,
+    ROM_FILTER_MISSING,
+    ROM_FILTER_INSTALLED,
+} rom_filter;
+
+static const char *rom_filter_name(rom_filter f) {
+    switch (f) {
+    case ROM_FILTER_MISSING:   return "Missing";
+    case ROM_FILTER_INSTALLED: return "Installed";
+    default:                   return "All";
+    }
+}
+
 static const char *rom_status_label(const rom_file *rom,
                                      const console_dir *console,
                                      library_mode mode) {
@@ -202,46 +216,85 @@ static void show_rom_list_screen(const console_dir *console,
         return;
     }
 
-    const char *queue_label = (mode == LIB_MODE_ART) ? "Queue Art" : "Queue Cheat";
-    const char *queue_all_label = (mode == LIB_MODE_ART) ? "Queue All Art" : "Queue All Cheats";
+    const char *queue_label     = (mode == LIB_MODE_ART) ? "Queue Art"      : "Queue Cheat";
+    const char *queue_all_label = (mode == LIB_MODE_ART) ? "Queue All Art"  : "Queue All Cheats";
 
-    int initial_idx = 0;
-    int visible_start = 0;
+    rom_filter filter      = ROM_FILTER_ALL;
+    int        initial_idx = 0;
+    int        visible_start = 0;
+
+    /* Reusable filter map: filter_map[visible_i] = real_i */
+    int *filter_map = malloc(sizeof(int) * (size_t)rom_count);
 
     for (;;) {
-        /* Build list items with embedded status */
-        char (*labels)[512] = malloc(sizeof(char[512]) * (size_t)rom_count);
-        ap_list_item *items = calloc((size_t)rom_count, sizeof(ap_list_item));
-
+        /* Determine which ROMs are installed (needed for filter & label) */
+        bool *installed = malloc(sizeof(bool) * (size_t)rom_count);
         for (int i = 0; i < rom_count; i++) {
-            const char *status = rom_status_label(&roms[i], console, mode);
-            if (status)
-                snprintf(labels[i], 512, "%s   [%s]", roms[i].display, status);
-            else
-                snprintf(labels[i], 512, "%s", roms[i].display);
-            items[i].label = labels[i];
+            installed[i] = (mode == LIB_MODE_ART)
+                ? artwork_exists(roms[i].path, roms[i].display)
+                : cheat_exists(console->tag, roms[i].display);
         }
 
+        /* Build filter map */
+        int visible_count = 0;
+        for (int i = 0; i < rom_count; i++) {
+            if (filter == ROM_FILTER_MISSING   &&  installed[i]) continue;
+            if (filter == ROM_FILTER_INSTALLED && !installed[i]) continue;
+            filter_map[visible_count++] = i;
+        }
+
+        /* Build list items */
+        char (*labels)[512] = malloc(sizeof(char[512]) * (size_t)(visible_count > 0 ? visible_count : 1));
+        ap_list_item *items = calloc((size_t)(visible_count > 0 ? visible_count : 1), sizeof(ap_list_item));
+
+        for (int vi = 0; vi < visible_count; vi++) {
+            int i = filter_map[vi];
+            const char *status = rom_status_label(&roms[i], console, mode);
+            bool is_inst = installed[i];
+            if (is_inst)
+                snprintf(labels[vi], 512, "\u2713  %s", roms[i].display);
+            else if (status)
+                snprintf(labels[vi], 512, "   %s   [%s]", roms[i].display, status);
+            else
+                snprintf(labels[vi], 512, "   %s", roms[i].display);
+            items[vi].label = labels[vi];
+        }
+
+        free(installed);
+
+        /* Title reflects active filter */
+        char title[256];
+        if (filter == ROM_FILTER_ALL)
+            snprintf(title, sizeof(title), "%s", console->display);
+        else
+            snprintf(title, sizeof(title), "%s  [%s]",
+                     console->display, rom_filter_name(filter));
+
+        /* Footer: X cycles filter, A queues selected, Y queues all */
+        char filter_btn_label[32];
+        snprintf(filter_btn_label, sizeof(filter_btn_label),
+                 "Filter: %s", rom_filter_name(filter));
+
         ap_footer_item footer[] = {
-            {AP_BTN_B, "Back", false},
-            {AP_BTN_A, queue_label, false},
-            {AP_BTN_Y, queue_all_label, true},
+            {AP_BTN_B, "Back",            false},
+            {AP_BTN_X, filter_btn_label,  false},
+            {AP_BTN_A, queue_label,       false},
+            {AP_BTN_Y, queue_all_label,   true},
         };
 
-        char title[256];
-        snprintf(title, sizeof(title), "%s", console->display);
-
-        ap_list_opts opts = ap_list_default_opts(title, items, rom_count);
-        opts.footer = footer;
-        opts.footer_count = 3;
+        ap_list_opts opts = ap_list_default_opts(title, items,
+                                                  visible_count > 0 ? visible_count : 0);
+        opts.footer                  = footer;
+        opts.footer_count            = 4;
         opts.secondary_action_button = AP_BTN_Y;
-        opts.initial_index = initial_idx;
-        opts.visible_start_index = visible_start;
+        opts.tertiary_action_button  = AP_BTN_X;
+        opts.initial_index           = initial_idx;
+        opts.visible_start_index     = visible_start;
 
         ap_list_result result;
         int ret = ap_list(&opts, &result);
 
-        initial_idx = result.selected_index;
+        initial_idx  = result.selected_index;
         visible_start = result.visible_start_index;
 
         free(labels);
@@ -249,40 +302,121 @@ static void show_rom_list_screen(const console_dir *console,
 
         if (ret == AP_CANCELLED) break;
 
+        /* X: cycle filter */
+        if (result.action == AP_ACTION_TERTIARY_TRIGGERED) {
+            filter = (rom_filter)((filter + 1) % 3);
+            initial_idx   = 0;
+            visible_start = 0;
+            continue;
+        }
+
         int sel = result.selected_index;
-        if (sel < 0 || sel >= rom_count) break;
+        if (sel < 0 || sel >= visible_count) {
+            if (visible_count == 0) break; /* empty filtered list, only B works */
+            break;
+        }
+        int real = filter_map[sel];
 
         if (result.action == AP_ACTION_SELECTED || result.action == AP_ACTION_TRIGGERED) {
             /* A: Queue single ROM */
             queue_set_settings(settings);
             bool added;
             if (mode == LIB_MODE_ART)
-                added = queue_add_artwork(&roms[sel], console);
+                added = queue_add_artwork(&roms[real], console);
             else
-                added = queue_add_cheat(&roms[sel], console);
+                added = queue_add_cheat(&roms[real], console);
 
             if (added) {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "Queued \"%s\" for %s.",
-                         roms[sel].display,
+                         roms[real].display,
                          mode == LIB_MODE_ART ? "artwork" : "cheats");
                 show_brief(msg);
             } else {
-                show_brief(mode == LIB_MODE_ART
-                    ? "Already queued or artwork exists."
-                    : "Already queued or cheat exists.");
+                /* Check if already installed — offer re-download */
+                bool already = (mode == LIB_MODE_ART)
+                    ? artwork_exists(roms[real].path, roms[real].display)
+                    : cheat_exists(console->tag, roms[real].display);
+                if (already) {
+                    char prompt[256];
+                    snprintf(prompt, sizeof(prompt),
+                             "%s already installed for \"%s\". Re-download?",
+                             mode == LIB_MODE_ART ? "Artwork" : "Cheats",
+                             roms[real].display);
+                    ap_footer_item cf[] = {
+                        {AP_BTN_B, "No",  false},
+                        {AP_BTN_A, "Yes", true},
+                    };
+                    ap_message_opts mopts = {
+                        .message      = prompt,
+                        .footer       = cf,
+                        .footer_count = 2,
+                    };
+                    ap_confirm_result cres;
+                    ap_confirmation(&mopts, &cres);
+                    if (cres.confirmed) {
+                        queue_set_settings(settings);
+                        if (mode == LIB_MODE_ART)
+                            queue_add_artwork_forced(&roms[real], console);
+                        else
+                            queue_add_cheat_forced(&roms[real], console);
+                    }
+                } else {
+                    show_brief("Already queued.");
+                }
             }
             continue;
         }
 
         if (result.action == AP_ACTION_SECONDARY_TRIGGERED) {
-            /* Y: Queue all */
+            /* Y: Queue all missing — or offer re-download if some are installed */
             queue_set_settings(settings);
+
+            /* Count how many are already installed */
+            int installed_count = 0;
+            for (int i = 0; i < rom_count; i++) {
+                if (mode == LIB_MODE_ART) {
+                    if (artwork_exists(roms[i].path, roms[i].display))
+                        installed_count++;
+                } else {
+                    if (cheat_exists(console->tag, roms[i].display))
+                        installed_count++;
+                }
+            }
+
+            bool force = false;
+            if (installed_count > 0) {
+                ap_list_item choices[] = {
+                    {.label = "Queue missing only"},
+                    {.label = "Re-download all (including installed)"},
+                };
+                ap_footer_item cf[] = {
+                    {AP_BTN_B, "Cancel", false},
+                    {AP_BTN_A, "Select", true},
+                };
+                char choice_title[64];
+                snprintf(choice_title, sizeof(choice_title),
+                         "%d already installed", installed_count);
+                ap_list_opts copts = ap_list_default_opts(choice_title, choices, 2);
+                copts.footer       = cf;
+                copts.footer_count = 2;
+                ap_list_result cres;
+                int cret = ap_list(&copts, &cres);
+                if (cret == AP_CANCELLED || cres.selected_index < 0)
+                    continue;
+                force = (cres.selected_index == 1);
+            }
+
             int added;
-            if (mode == LIB_MODE_ART)
-                added = queue_add_all_artwork(console, settings->show_hidden);
-            else
-                added = queue_add_all_cheats(console, settings->show_hidden);
+            if (force) {
+                added = (mode == LIB_MODE_ART)
+                    ? queue_add_all_artwork_forced(console, settings->show_hidden)
+                    : queue_add_all_cheats_forced(console, settings->show_hidden);
+            } else {
+                added = (mode == LIB_MODE_ART)
+                    ? queue_add_all_artwork(console, settings->show_hidden)
+                    : queue_add_all_cheats(console, settings->show_hidden);
+            }
 
             char msg[128];
             snprintf(msg, sizeof(msg), "Queued %d ROMs for %s.", added,
@@ -292,6 +426,7 @@ static void show_rom_list_screen(const console_dir *console,
         }
     }
 
+    free(filter_map);
     free(roms);
 }
 
@@ -338,16 +473,14 @@ static void show_library_screen(library_mode mode) {
         return;
     }
 
-    /* Build labels with relevant badge only */
+    /* Build labels (system name) and metadata (counts) */
     char (*labels)[512] = malloc(sizeof(char[512]) * (size_t)visible_count);
+    char (*meta)[32]    = malloc(sizeof(char[32])  * (size_t)visible_count);
     for (int vi = 0; vi < visible_count; vi++) {
         int i = visible_map[vi];
-        if (mode == LIB_MODE_ART)
-            snprintf(labels[vi], 512, "%s   %d/%d art",
-                     names[i], stats[i].art_count, stats[i].rom_count);
-        else
-            snprintf(labels[vi], 512, "%s   %d/%d cht",
-                     names[i], stats[i].cheat_count, stats[i].rom_count);
+        snprintf(labels[vi], 512, "%s", names[i]);
+        int count = (mode == LIB_MODE_ART) ? stats[i].art_count : stats[i].cheat_count;
+        snprintf(meta[vi], 32, "%d / %d", count, stats[i].rom_count);
     }
 
     const char *title = (mode == LIB_MODE_ART) ? "Scrape Artwork" : "Download Cheats";
@@ -358,8 +491,10 @@ static void show_library_screen(library_mode mode) {
 
     for (;;) {
         ap_list_item *items = calloc((size_t)visible_count, sizeof(ap_list_item));
-        for (int vi = 0; vi < visible_count; vi++)
-            items[vi].label = labels[vi];
+        for (int vi = 0; vi < visible_count; vi++) {
+            items[vi].label    = labels[vi];
+            items[vi].trailing_text = meta[vi];
+        }
 
         ap_footer_item footer[] = {
             {AP_BTN_B, "Back", false},
@@ -388,27 +523,55 @@ static void show_library_screen(library_mode mode) {
         int real_idx = visible_map[sel];
 
         if (result.action == AP_ACTION_SECONDARY_TRIGGERED) {
-            /* Y: Queue all for this system */
+            /* Y: Queue all for this system — offer choice if some are installed */
+            system_stats *st = &stats[real_idx];
+            int inst = (mode == LIB_MODE_ART) ? st->art_count : st->cheat_count;
+
+            bool force = false;
+            if (inst > 0) {
+                ap_list_item choices[] = {
+                    {.label = "Queue missing only"},
+                    {.label = "Re-download all (including installed)"},
+                };
+                ap_footer_item cf[] = {
+                    {AP_BTN_B, "Cancel", false},
+                    {AP_BTN_A, "Select", true},
+                };
+                char choice_title[64];
+                snprintf(choice_title, sizeof(choice_title),
+                         "%d already installed", inst);
+                ap_list_opts copts = ap_list_default_opts(choice_title, choices, 2);
+                copts.footer       = cf;
+                copts.footer_count = 2;
+                ap_list_result cres;
+                int cret = ap_list(&copts, &cres);
+                if (cret == AP_CANCELLED || cres.selected_index < 0)
+                    continue;
+                force = (cres.selected_index == 1);
+            }
+
             queue_set_settings(&settings);
             int added;
-            if (mode == LIB_MODE_ART)
-                added = queue_add_all_artwork(&consoles[real_idx], settings.show_hidden);
-            else
-                added = queue_add_all_cheats(&consoles[real_idx], settings.show_hidden);
+            if (force) {
+                added = (mode == LIB_MODE_ART)
+                    ? queue_add_all_artwork_forced(&consoles[real_idx], settings.show_hidden)
+                    : queue_add_all_cheats_forced(&consoles[real_idx], settings.show_hidden);
+            } else {
+                added = (mode == LIB_MODE_ART)
+                    ? queue_add_all_artwork(&consoles[real_idx], settings.show_hidden)
+                    : queue_add_all_cheats(&consoles[real_idx], settings.show_hidden);
+            }
 
             char msg[128];
             snprintf(msg, sizeof(msg), "Queued %d ROMs for %s.", added,
                      mode == LIB_MODE_ART ? "artwork" : "cheats");
             show_brief(msg);
 
-            /* Refresh stats for this system */
+            /* Refresh stats and metadata for this system */
             stats[real_idx] = compute_system_stats(&consoles[real_idx], settings.show_hidden);
-            if (mode == LIB_MODE_ART)
-                snprintf(labels[sel], 512, "%s   %d/%d art",
-                         names[real_idx], stats[real_idx].art_count, stats[real_idx].rom_count);
-            else
-                snprintf(labels[sel], 512, "%s   %d/%d cht",
-                         names[real_idx], stats[real_idx].cheat_count, stats[real_idx].rom_count);
+            int new_count = (mode == LIB_MODE_ART)
+                ? stats[real_idx].art_count : stats[real_idx].cheat_count;
+            snprintf(meta[sel], 32, "%d / %d", new_count, stats[real_idx].rom_count);
             continue;
         }
 
@@ -419,6 +582,7 @@ static void show_library_screen(library_mode mode) {
     free(visible_map);
     free(names);
     free(labels);
+    free(meta);
     free(stats);
     free(consoles);
     free_settings(&settings);
@@ -515,21 +679,29 @@ static void show_item_detail(const queue_item *item) {
 
         cheat_desc_list descs;
         if (parse_cheat_descriptions(cht_path, &descs) == 0 && descs.count > 0) {
-            /* Build a single string with one cheat per line */
+            /* Build a numbered list: "1. Description\n2. Description\n..." */
+            /* Each line: up to 4 digits + ". " + description + "\n" */
             size_t total_len = 0;
             for (int i = 0; i < descs.count; i++) {
+                total_len += 8; /* "NNN. " prefix + newline + safety */
                 if (descs.descriptions[i])
-                    total_len += strlen(descs.descriptions[i]) + 1;
+                    total_len += strlen(descs.descriptions[i]);
+                else
+                    total_len += 12; /* "Cheat NNN" fallback */
             }
             cheat_text = malloc(total_len + 1);
             if (cheat_text) {
                 cheat_text[0] = '\0';
+                char *pos = cheat_text;
                 for (int i = 0; i < descs.count; i++) {
-                    if (!descs.descriptions[i]) continue;
-                    if (cheat_text[0] != '\0')
-                        strcat(cheat_text, "\n");
-                    strcat(cheat_text, descs.descriptions[i]);
+                    if (pos != cheat_text) *pos++ = '\n';
+                    const char *desc = descs.descriptions[i];
+                    if (desc && desc[0])
+                        pos += sprintf(pos, "%d. %s", i + 1, desc);
+                    else
+                        pos += sprintf(pos, "%d. Cheat %d", i + 1, i + 1);
                 }
+                *pos = '\0';
             }
             cheat_desc_list_free(&descs);
 

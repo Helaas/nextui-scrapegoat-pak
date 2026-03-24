@@ -997,6 +997,11 @@ int parse_cheat_descriptions(const char *cht_path, cheat_desc_list *out) {
     /* Second pass: extract descriptions */
     rewind(f);
     while (fgets(line, sizeof(line), f)) {
+        /* Pre-filter: only _desc lines. Without this guard, sscanf returns 1
+         * even for _code lines (the %d succeeds before the literal _desc
+         * fails to match), causing cheat codes to be shown as descriptions. */
+        if (!strstr(line, "_desc"))
+            continue;
         int idx = -1;
         if (sscanf(line, " cheat%d_desc", &idx) != 1)
             continue;
