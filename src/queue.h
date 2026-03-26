@@ -50,6 +50,11 @@ typedef struct {
     int pending;   /* IDLE + active statuses */
 } queue_stats;
 
+typedef struct {
+    int requests_today;
+    int max_requests;
+} queue_api_stats;
+
 /* ── Lifecycle ────────────────────────────────────────────── */
 
 void queue_init(void);
@@ -86,6 +91,7 @@ int queue_add_all_cheats_forced(const console_dir *console, bool show_hidden);
 bool queue_is_queued(const char *rom_path, queue_item_type type);
 queue_item_status queue_get_rom_status(const char *rom_path, queue_item_type type);
 queue_stats queue_get_stats(void);
+queue_api_stats queue_get_api_stats(void);
 bool queue_is_active(void);
 
 /* Returns true if queue state changed since last call (for UI refresh). */

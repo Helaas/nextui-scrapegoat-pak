@@ -27,6 +27,8 @@ static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool            g_dirty = false;
 static bool            g_manager_started = false;
 static bool            g_worker_running = false;
+static atomic_int      g_api_req_today = 0;
+static atomic_int      g_api_max_req   = 0;
 
 /* ── Worker state ─────────────────────────────────────────── */
 
@@ -242,6 +244,10 @@ static void *artwork_worker_fn(void *arg) {
                                        &result);
         if (search_ret == -2)
             break;
+        if (search_ret >= 0) {
+            atomic_store(&g_api_req_today, result.requests_today);
+            atomic_store(&g_api_max_req, result.max_requests);
+        }
         if (search_ret == 1) {
             set_item_status(queue_index, QUEUE_NOT_FOUND);
             continue;
@@ -480,6 +486,10 @@ static void process_artwork_batch(app_settings *settings) {
                                     g_artwork_work.region_prio,
                                     g_artwork_work.region_count,
                                     &result);
+            if (ret >= 0) {
+                atomic_store(&g_api_req_today, result.requests_today);
+                atomic_store(&g_api_max_req, result.max_requests);
+            }
             if (ret == 0) {
                 if (result.max_threads > 1)
                     max_threads = result.max_threads;
@@ -932,6 +942,13 @@ queue_stats queue_get_stats(void) {
     }
     pthread_mutex_unlock(&g_mutex);
     return stats;
+}
+
+queue_api_stats queue_get_api_stats(void) {
+    queue_api_stats s;
+    s.requests_today = atomic_load(&g_api_req_today);
+    s.max_requests   = atomic_load(&g_api_max_req);
+    return s;
 }
 
 bool queue_is_active(void) {
