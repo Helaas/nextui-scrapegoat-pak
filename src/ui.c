@@ -971,17 +971,20 @@ static void show_progress_screen(void) {
 
                 ap_color text_color = (i == selected) ? theme->highlighted_text : theme->text;
 
-                /* ROM name (left) */
-                int name_max_w = content.w - status_max_w - padding * 3;
-                ap_draw_text_ellipsized(font_large, item->rom_display,
-                    content.x + padding, row_y + ap_scale(2), text_color, name_max_w);
-
-                /* Status (right) */
+                /* Status (right) — measure first to correctly clip ROM name */
                 const char *status_str = queue_status_text(item->status);
                 ap_color sc = (i == selected) ? theme->highlighted_text :
                               status_color(item->status, theme);
                 int status_w;
                 TTF_SizeUTF8(font_small, status_str, &status_w, NULL);
+                int effective_status_w = status_w > status_max_w ? status_w : status_max_w;
+
+                /* ROM name (left) */
+                int name_max_w = content.w - effective_status_w - padding * 3;
+                ap_draw_text_ellipsized(font_large, item->rom_display,
+                    content.x + padding, row_y + ap_scale(2), text_color, name_max_w);
+
+                /* Draw status */
                 ap_draw_text(font_small, status_str,
                     content.x + content.w - padding - status_w,
                     row_y + ap_scale(4), sc);
@@ -1029,7 +1032,7 @@ static void show_progress_screen(void) {
 
 static void edit_username(app_settings *settings) {
     ap_keyboard_result result;
-    int ret = ap_keyboard(settings->ss_username, "Y: Cancel",
+    int ret = ap_keyboard(settings->ss_username, NULL,
                            AP_KB_GENERAL, &result);
     if (ret != AP_OK) return;
 
@@ -1039,7 +1042,7 @@ static void edit_username(app_settings *settings) {
 
 static void edit_password(app_settings *settings) {
     ap_keyboard_result result;
-    int ret = ap_keyboard(settings->ss_password, "Y: Cancel",
+    int ret = ap_keyboard(settings->ss_password, NULL,
                            AP_KB_GENERAL, &result);
     if (ret != AP_OK) return;
 
