@@ -53,6 +53,7 @@ typedef struct {
 typedef struct {
     int requests_today;
     int max_requests;
+    int max_threads;
 } queue_api_stats;
 
 /* ── Lifecycle ────────────────────────────────────────────── */

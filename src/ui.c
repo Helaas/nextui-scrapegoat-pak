@@ -424,6 +424,8 @@ static void show_rom_detail_screen(const rom_file *rom,
                 .type = AP_SECTION_IMAGE,
                 .title = NULL,
                 .image_path = art_path,
+                .image_w = ap_scale(200),
+                .image_h = ap_scale(200),
             };
             section_count++;
         }
@@ -673,21 +675,23 @@ static void show_api_usage_screen(void) {
         return;
     }
 
-    char req_today[32], daily_limit[32], remaining[32];
+    char req_today[32], daily_limit[32], remaining[32], threads[32];
     snprintf(req_today,   sizeof(req_today),   "%d", api.requests_today);
     snprintf(daily_limit, sizeof(daily_limit), "%d", api.max_requests);
     snprintf(remaining,   sizeof(remaining),   "%d", api.max_requests - api.requests_today);
+    snprintf(threads,     sizeof(threads),     "%d", api.max_threads);
 
     ap_detail_info_pair info_pairs[] = {
         {"Requests Today", req_today},
         {"Daily Limit",    daily_limit},
         {"Remaining",      remaining},
+        {"Threads",        threads},
     };
     ap_detail_section sections[] = {{
         .type       = AP_SECTION_INFO,
         .title      = NULL,
         .info_pairs = info_pairs,
-        .info_count = 3,
+        .info_count = 4,
     }};
     ap_footer_item footer[] = {
         {AP_BTN_B, "Back", false},
@@ -844,6 +848,8 @@ static void show_item_detail(const queue_item *item) {
                 .type = AP_SECTION_IMAGE,
                 .title = NULL,
                 .image_path = art_path,
+                .image_w = ap_scale(200),
+                .image_h = ap_scale(200),
             };
             section_count++;
         }
@@ -881,7 +887,7 @@ static void show_progress_screen(void) {
         TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
         int screen_w = ap_get_screen_width();
         SDL_Rect content = ap_get_content_rect(true, true, false);
-        int row_height = TTF_FontHeight(font_large) + TTF_FontHeight(font_tiny) + ap_scale(6);
+        int row_height = TTF_FontHeight(font_large) + TTF_FontHeight(font_tiny) + ap_scale(12);
         int visible_rows = content.h / row_height;
         if (visible_rows < 1) visible_rows = 1;
 
@@ -940,7 +946,8 @@ static void show_progress_screen(void) {
         if (selected_is_terminal)
             footer[footer_count++] = (ap_footer_item){AP_BTN_A, "Details", false};
         footer[footer_count++] = (ap_footer_item){AP_BTN_B, "Back", false};
-        footer[footer_count++] = (ap_footer_item){AP_BTN_X, can_clear ? "Clear Done" : "Clear When Idle", true};
+        if (can_clear)
+            footer[footer_count++] = (ap_footer_item){AP_BTN_X, "Clear Done", true};
         ap_draw_footer(footer, footer_count);
 
         /* Adjust scroll to keep selection visible */
@@ -982,12 +989,12 @@ static void show_progress_screen(void) {
                 /* ROM name (left) */
                 int name_max_w = content.w - effective_status_w - padding * 3;
                 ap_draw_text_ellipsized(font_large, item->rom_display,
-                    content.x + padding, row_y + ap_scale(2), text_color, name_max_w);
+                    content.x + padding, row_y + ap_scale(4), text_color, name_max_w);
 
                 /* Draw status */
                 ap_draw_text(font_small, status_str,
                     content.x + content.w - padding - status_w,
-                    row_y + ap_scale(4), sc);
+                    row_y + ap_scale(6), sc);
 
                 /* System name (below, smaller) */
                 const char *type_str = item->type == QUEUE_TYPE_ARTWORK ? "art" : "cht";
@@ -996,7 +1003,7 @@ static void show_progress_screen(void) {
                 ap_color desc_color = (i == selected) ? theme->highlighted_text : theme->hint;
                 ap_draw_text_ellipsized(font_tiny, desc,
                     content.x + padding,
-                    row_y + TTF_FontHeight(font_large) + ap_scale(2),
+                    row_y + TTF_FontHeight(font_large) + ap_scale(4),
                     desc_color, name_max_w);
 
                 y += row_height;
@@ -1315,9 +1322,9 @@ static void show_settings_screen(void) {
         if (settings.ss_username[0])
             snprintf(user_display, sizeof(user_display), "%s", settings.ss_username);
         else
-            snprintf(user_display, sizeof(user_display), "<not set>");
+            snprintf(user_display, sizeof(user_display), "(not set)");
 
-        const char *pass_display = settings.ss_password[0] ? "<set>" : "<not set>";
+        const char *pass_display = settings.ss_password[0] ? "(set)" : "(not set)";
 
         ap_option user_opt = {.label = user_display, .value = "edit"};
         ap_option pass_opt = {.label = pass_display, .value = "edit"};

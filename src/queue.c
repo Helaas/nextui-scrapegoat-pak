@@ -27,8 +27,9 @@ static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool            g_dirty = false;
 static bool            g_manager_started = false;
 static bool            g_worker_running = false;
-static atomic_int      g_api_req_today = 0;
-static atomic_int      g_api_max_req   = 0;
+static atomic_int      g_api_req_today   = 0;
+static atomic_int      g_api_max_req     = 0;
+static atomic_int      g_api_max_threads = 0;
 
 /* ── Worker state ─────────────────────────────────────────── */
 
@@ -247,6 +248,8 @@ static void *artwork_worker_fn(void *arg) {
         if (search_ret >= 0) {
             atomic_store(&g_api_req_today, result.requests_today);
             atomic_store(&g_api_max_req, result.max_requests);
+            if (result.max_threads > 0)
+                atomic_store(&g_api_max_threads, result.max_threads);
         }
         if (search_ret == 1) {
             set_item_status(queue_index, QUEUE_NOT_FOUND);
@@ -489,6 +492,8 @@ static void process_artwork_batch(app_settings *settings) {
             if (ret >= 0) {
                 atomic_store(&g_api_req_today, result.requests_today);
                 atomic_store(&g_api_max_req, result.max_requests);
+                if (result.max_threads > 0)
+                    atomic_store(&g_api_max_threads, result.max_threads);
             }
             if (ret == 0) {
                 if (result.max_threads > 1)
@@ -948,6 +953,7 @@ queue_api_stats queue_get_api_stats(void) {
     queue_api_stats s;
     s.requests_today = atomic_load(&g_api_req_today);
     s.max_requests   = atomic_load(&g_api_max_req);
+    s.max_threads    = atomic_load(&g_api_max_threads);
     return s;
 }
 
