@@ -133,10 +133,10 @@ static main_action show_main_menu(void) {
 
     char progress_label[64];
     if (qstats.total > 0)
-        snprintf(progress_label, sizeof(progress_label), "Queued Downloads  (%d/%d)",
+        snprintf(progress_label, sizeof(progress_label), "Downloads  (%d/%d)",
                  qstats.done, qstats.total);
     else
-        snprintf(progress_label, sizeof(progress_label), "Queued Downloads");
+        snprintf(progress_label, sizeof(progress_label), "Downloads");
 
     ap_list_item items[] = {
         {.label = "Artwork"},
@@ -780,7 +780,7 @@ static void show_item_detail(const queue_item *item) {
 
     if (is_error) {
         const char *msg = item->error_msg[0] ? item->error_msg :
-                          (item->status == QUEUE_NOT_FOUND ? "Not found in database" :
+                          (item->status == QUEUE_NOT_FOUND ? "Not found in libretro database" :
                            "An unknown error occurred");
         sections[section_count] = (ap_detail_section){
             .type = AP_SECTION_DESCRIPTION,
@@ -873,9 +873,45 @@ static void show_item_detail(const queue_item *item) {
     free(cheat_text);
 }
 
+typedef enum {
+    PROG_FILTER_ALL = 0,
+    PROG_FILTER_IN_PROGRESS,
+    PROG_FILTER_DONE,
+    PROG_FILTER_FAILED,
+    PROG_FILTER_COUNT,
+} prog_filter;
+
+static const char *prog_filter_name(prog_filter f) {
+    switch (f) {
+    case PROG_FILTER_ALL:         return "All";
+    case PROG_FILTER_IN_PROGRESS: return "In Progress";
+    case PROG_FILTER_DONE:        return "Done";
+    case PROG_FILTER_FAILED:      return "Failed";
+    default:                      return "All";
+    }
+}
+
+static bool prog_filter_matches(prog_filter f, queue_item_status status) {
+    switch (f) {
+    case PROG_FILTER_ALL:
+        return true;
+    case PROG_FILTER_IN_PROGRESS:
+        return status == QUEUE_IDLE || status == QUEUE_SEARCHING ||
+               status == QUEUE_DOWNLOADING || status == QUEUE_CLONING ||
+               status == QUEUE_MATCHING;
+    case PROG_FILTER_DONE:
+        return status == QUEUE_DONE || status == QUEUE_SKIPPED;
+    case PROG_FILTER_FAILED:
+        return status == QUEUE_NOT_FOUND || status == QUEUE_ERROR;
+    default:
+        return true;
+    }
+}
+
 static void show_progress_screen(void) {
     int selected = 0;
     int scroll_offset = 0;
+    prog_filter filter = PROG_FILTER_ALL;
 
     for (;;) {
         bool can_clear = !queue_is_active();
@@ -888,7 +924,6 @@ static void show_progress_screen(void) {
         int screen_w = ap_get_screen_width();
         SDL_Rect content = ap_get_content_rect(true, true, false);
         int row_height = TTF_FontHeight(font_large) + TTF_FontHeight(font_tiny) + ap_scale(8);
-        int summary_h = TTF_FontHeight(font_tiny) + ap_scale(4);
         int visible_rows = content.h / row_height;
         if (visible_rows < 1) visible_rows = 1;
 
@@ -903,6 +938,8 @@ static void show_progress_screen(void) {
             case AP_BTN_A:     show_detail = true; break;
             case AP_BTN_B:     quit = true; break;
             case AP_BTN_X:     clear = true; break;
+            case AP_BTN_Y:     filter = (filter + 1) % PROG_FILTER_COUNT;
+                               selected = 0; scroll_offset = 0; break;
             case AP_BTN_DOWN:  selected++; break;
             case AP_BTN_UP:    selected--; break;
             case AP_BTN_L1:    /* fall through */
@@ -922,35 +959,44 @@ static void show_progress_screen(void) {
         queue_stats stats = queue_get_stats();
         can_clear = !queue_is_active();
 
-        /* Reserve summary bar space only when items overflow */
-        if (count > visible_rows)
-            visible_rows = (content.h - summary_h) / row_height;
-        if (visible_rows < 1) visible_rows = 1;
+        /* Build filter map */
+        int *filter_map = malloc(sizeof(int) * count);
+        int visible_count = 0;
+        for (int i = 0; i < count; i++) {
+            if (prog_filter_matches(filter, items[i].status))
+                filter_map[visible_count++] = i;
+        }
 
         /* Clamp selection */
-        if (count == 0) selected = 0;
+        if (visible_count == 0) selected = 0;
         else {
             if (selected < 0) selected = 0;
-            if (selected >= count) selected = count - 1;
+            if (selected >= visible_count) selected = visible_count - 1;
         }
 
         /* Show detail for selected item */
-        bool selected_is_terminal = count > 0 &&
-            is_item_terminal(items[selected].status);
+        bool selected_is_terminal = visible_count > 0 &&
+            is_item_terminal(items[filter_map[selected]].status);
         if (show_detail && selected_is_terminal) {
-            show_item_detail(&items[selected]);
+            show_item_detail(&items[filter_map[selected]]);
+            free(filter_map);
             free(items);
             continue;
         }
 
         ap_draw_background();
-        ap_draw_screen_title("Queued Downloads", NULL);
+        {
+            char title[128];
+            snprintf(title, sizeof(title), "Downloads  [%s]", prog_filter_name(filter));
+            ap_draw_screen_title(title, NULL);
+        }
 
         /* Footer */
-        ap_footer_item footer[3];
+        ap_footer_item footer[5];
         int footer_count = 0;
         if (selected_is_terminal)
             footer[footer_count++] = (ap_footer_item){AP_BTN_A, "Details", false};
+        footer[footer_count++] = (ap_footer_item){AP_BTN_Y, "Filter", false};
         footer[footer_count++] = (ap_footer_item){AP_BTN_B, "Back", false};
         if (can_clear)
             footer[footer_count++] = (ap_footer_item){AP_BTN_X, "Clear Done", true};
@@ -963,9 +1009,11 @@ static void show_progress_screen(void) {
             scroll_offset = selected - visible_rows + 1;
         if (scroll_offset < 0) scroll_offset = 0;
 
-        if (count == 0) {
+        if (visible_count == 0) {
             /* Empty state */
-            ap_draw_text(font_large, "No items in queue.",
+            const char *empty_msg = count == 0 ? "No items in queue." :
+                                    "No items match this filter.";
+            ap_draw_text(font_large, empty_msg,
                          content.x + ap_scale(16), content.y + ap_scale(16), theme->hint);
         } else {
             /* Draw items */
@@ -973,20 +1021,20 @@ static void show_progress_screen(void) {
             int padding = ap_scale(12);
             int status_max_w = ap_scale(120);
 
-            for (int i = scroll_offset; i < count && i < scroll_offset + visible_rows; i++) {
-                queue_item *item = &items[i];
+            for (int vi = scroll_offset; vi < visible_count && vi < scroll_offset + visible_rows; vi++) {
+                queue_item *item = &items[filter_map[vi]];
                 int row_y = y;
 
                 /* Selection pill */
-                if (i == selected) {
+                if (vi == selected) {
                     ap_draw_pill(content.x, row_y, content.w, row_height, theme->highlight);
                 }
 
-                ap_color text_color = (i == selected) ? theme->highlighted_text : theme->text;
+                ap_color text_color = (vi == selected) ? theme->highlighted_text : theme->text;
 
                 /* Status (right) — measure first to correctly clip ROM name */
                 const char *status_str = queue_status_text(item->status);
-                ap_color sc = (i == selected) ? theme->highlighted_text :
+                ap_color sc = (vi == selected) ? theme->highlighted_text :
                               status_color(item->status, theme);
                 int status_w;
                 TTF_SizeUTF8(font_small, status_str, &status_w, NULL);
@@ -1006,7 +1054,7 @@ static void show_progress_screen(void) {
                 const char *type_str = item->type == QUEUE_TYPE_ARTWORK ? "art" : "cht";
                 char desc[300];
                 snprintf(desc, sizeof(desc), "%s  [%s]", item->system_display, type_str);
-                ap_color desc_color = (i == selected) ? theme->highlighted_text : theme->hint;
+                ap_color desc_color = (vi == selected) ? theme->highlighted_text : theme->hint;
                 ap_draw_text_ellipsized(font_tiny, desc,
                     content.x + padding,
                     row_y + TTF_FontHeight(font_large) + ap_scale(2),
@@ -1016,11 +1064,11 @@ static void show_progress_screen(void) {
             }
 
             /* Scrollbar */
-            if (count > visible_rows) {
+            if (visible_count > visible_rows) {
                 ap_draw_scrollbar(
                     content.x + content.w - ap_scale(4),
                     content.y, content.h,
-                    visible_rows, count, scroll_offset);
+                    visible_rows, visible_count, scroll_offset);
             }
 
             /* Summary bar */
@@ -1036,6 +1084,7 @@ static void show_progress_screen(void) {
         }
 
         ap_present();
+        free(filter_map);
         free(items);
         SDL_Delay(33); /* ~30fps */
     }
