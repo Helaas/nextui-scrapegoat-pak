@@ -887,7 +887,8 @@ static void show_progress_screen(void) {
         TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
         int screen_w = ap_get_screen_width();
         SDL_Rect content = ap_get_content_rect(true, true, false);
-        int row_height = TTF_FontHeight(font_large) + TTF_FontHeight(font_tiny) + ap_scale(12);
+        int row_height = TTF_FontHeight(font_large) + TTF_FontHeight(font_tiny) + ap_scale(8);
+        int summary_h = TTF_FontHeight(font_tiny) + ap_scale(4);
         int visible_rows = content.h / row_height;
         if (visible_rows < 1) visible_rows = 1;
 
@@ -920,6 +921,11 @@ static void show_progress_screen(void) {
         int count = queue_snapshot(items, QUEUE_MAX_ITEMS);
         queue_stats stats = queue_get_stats();
         can_clear = !queue_is_active();
+
+        /* Reserve summary bar space only when items overflow */
+        if (count > visible_rows)
+            visible_rows = (content.h - summary_h) / row_height;
+        if (visible_rows < 1) visible_rows = 1;
 
         /* Clamp selection */
         if (count == 0) selected = 0;
@@ -989,12 +995,12 @@ static void show_progress_screen(void) {
                 /* ROM name (left) */
                 int name_max_w = content.w - effective_status_w - padding * 3;
                 ap_draw_text_ellipsized(font_large, item->rom_display,
-                    content.x + padding, row_y + ap_scale(4), text_color, name_max_w);
+                    content.x + padding, row_y + ap_scale(2), text_color, name_max_w);
 
                 /* Draw status */
                 ap_draw_text(font_small, status_str,
                     content.x + content.w - padding - status_w,
-                    row_y + ap_scale(6), sc);
+                    row_y + ap_scale(4), sc);
 
                 /* System name (below, smaller) */
                 const char *type_str = item->type == QUEUE_TYPE_ARTWORK ? "art" : "cht";
@@ -1003,7 +1009,7 @@ static void show_progress_screen(void) {
                 ap_color desc_color = (i == selected) ? theme->highlighted_text : theme->hint;
                 ap_draw_text_ellipsized(font_tiny, desc,
                     content.x + padding,
-                    row_y + TTF_FontHeight(font_large) + ap_scale(4),
+                    row_y + TTF_FontHeight(font_large) + ap_scale(2),
                     desc_color, name_max_w);
 
                 y += row_height;
