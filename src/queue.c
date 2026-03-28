@@ -997,6 +997,36 @@ void queue_clear_done(void) {
     pthread_mutex_unlock(&g_mutex);
 }
 
+void queue_cancel_all(void) {
+    /* Signal workers to stop */
+    atomic_store(&g_interrupt, 1);
+
+    pthread_mutex_lock(&g_mutex);
+    bool should_join = g_manager_started;
+    pthread_mutex_unlock(&g_mutex);
+
+    /* Wait for the manager thread to finish (must be outside mutex) */
+    if (should_join)
+        pthread_join(g_manager_thread, NULL);
+
+    /* Mark remaining non-terminal items as cancelled */
+    pthread_mutex_lock(&g_mutex);
+    for (int i = 0; i < g_count; i++) {
+        if (!is_terminal_status(g_items[i].status)) {
+            g_items[i].status = QUEUE_SKIPPED;
+            snprintf(g_items[i].error_msg, sizeof(g_items[i].error_msg),
+                     "Cancelled");
+        }
+    }
+    set_dirty_locked();
+    g_manager_started = false;
+    g_worker_running = false;
+    pthread_mutex_unlock(&g_mutex);
+
+    /* Reset interrupt so queue can restart later */
+    atomic_store(&g_interrupt, 0);
+}
+
 int queue_snapshot(queue_item *out, int max_items) {
     pthread_mutex_lock(&g_mutex);
     int count = g_count < max_items ? g_count : max_items;

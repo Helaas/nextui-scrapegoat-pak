@@ -29,11 +29,11 @@
 
 typedef enum { LIB_MODE_ART, LIB_MODE_CHEAT } library_mode;
 
-static void show_rom_list_screen(const console_dir *console,
+static bool show_rom_list_screen(const console_dir *console,
                                   const app_settings *settings,
                                   library_mode mode);
 
-static void show_rom_detail_screen(const rom_file *rom,
+static bool show_rom_detail_screen(const rom_file *rom,
                                     const console_dir *console,
                                     library_mode mode,
                                     const app_settings *settings);
@@ -59,6 +59,22 @@ static void show_brief(const char *message) {
     ap_message_opts opts = {.message = message, .footer = footer, .footer_count = 1};
     ap_confirm_result result;
     ap_confirmation(&opts, &result);
+}
+
+/* Returns true if user chose "Go to Downloads". */
+static bool show_queued_brief(const char *message) {
+    ap_footer_item footer[] = {
+        {AP_BTN_B, "Back",            false},
+        {AP_BTN_A, "Go to Downloads", true},
+    };
+    ap_message_opts opts = {
+        .message      = message,
+        .footer       = footer,
+        .footer_count = 2,
+    };
+    ap_confirm_result result;
+    ap_confirmation(&opts, &result);
+    return result.confirmed;
 }
 
 /* ── Console name disambiguation ──────────────────────────── */
@@ -132,11 +148,18 @@ static main_action show_main_menu(void) {
     queue_stats qstats = queue_get_stats();
 
     char progress_label[64];
-    if (qstats.total > 0)
-        snprintf(progress_label, sizeof(progress_label), "Downloads  (%d/%d)",
-                 qstats.done, qstats.total);
-    else
-        snprintf(progress_label, sizeof(progress_label), "Downloads");
+    if (qstats.total > 0) {
+        int processed = qstats.done + qstats.failed;
+        if (qstats.failed > 0)
+            snprintf(progress_label, sizeof(progress_label),
+                     "Queued Downloads  (%d/%d, %d failed)",
+                     processed, qstats.total, qstats.failed);
+        else
+            snprintf(progress_label, sizeof(progress_label),
+                     "Queued Downloads  (%d/%d)",
+                     processed, qstats.total);
+    } else
+        snprintf(progress_label, sizeof(progress_label), "Queued Downloads");
 
     ap_list_item items[] = {
         {.label = "Artwork"},
@@ -213,7 +236,7 @@ static const char *rom_status_label(const rom_file *rom,
     }
 }
 
-static void show_rom_list_screen(const console_dir *console,
+static bool show_rom_list_screen(const console_dir *console,
                                   const app_settings *settings,
                                   library_mode mode) {
     rom_file *roms = NULL;
@@ -221,7 +244,7 @@ static void show_rom_list_screen(const console_dir *console,
     if (rom_count <= 0) {
         show_error("No ROMs found in this system.");
         free(roms);
-        return;
+        return false;
     }
 
     rom_filter filter      = ROM_FILTER_ALL;
@@ -272,13 +295,18 @@ static void show_rom_list_screen(const console_dir *console,
         snprintf(title, sizeof(title), "%s  [%s]",
                  console->display, rom_filter_name(filter));
 
-        /* Footer: X=Filter, Y=Queue all Visible, B=Back (hides behind +1), A=Open */
-        ap_footer_item footer[] = {
-            {AP_BTN_X, "Filter",            false},
-            {AP_BTN_Y, "Queue all Visible", false},
-            {AP_BTN_B, "Back",              false},
-            {AP_BTN_A, "Open",              true},
-        };
+        /* Footer: B position depends on screen width */
+        ap_footer_item footer[4];
+        if (ap_get_screen_width() >= 1024) {
+            footer[0] = (ap_footer_item){AP_BTN_B, "Back",        false};
+            footer[1] = (ap_footer_item){AP_BTN_X, "Filter",      false};
+            footer[2] = (ap_footer_item){AP_BTN_Y, "Queue shown", false};
+        } else {
+            footer[0] = (ap_footer_item){AP_BTN_X, "Filter",      false};
+            footer[1] = (ap_footer_item){AP_BTN_Y, "Queue shown", false};
+            footer[2] = (ap_footer_item){AP_BTN_B, "Back",        false};
+        }
+        footer[3] = (ap_footer_item){AP_BTN_A, "Open", true};
 
         ap_list_opts opts = ap_list_default_opts(title, items,
                                                   visible_count > 0 ? visible_count : 0);
@@ -317,7 +345,11 @@ static void show_rom_list_screen(const console_dir *console,
 
         if (result.action == AP_ACTION_SELECTED || result.action == AP_ACTION_TRIGGERED) {
             /* A: Open detail screen */
-            show_rom_detail_screen(&roms[real], console, mode, settings);
+            if (show_rom_detail_screen(&roms[real], console, mode, settings)) {
+                free(filter_map);
+                free(roms);
+                return true;
+            }
             continue;
         }
 
@@ -377,18 +409,23 @@ static void show_rom_list_screen(const console_dir *console,
             char msg[128];
             snprintf(msg, sizeof(msg), "Queued %d ROMs for %s.", added,
                      mode == LIB_MODE_ART ? "artwork" : "cheats");
-            show_brief(msg);
+            if (show_queued_brief(msg)) {
+                free(filter_map);
+                free(roms);
+                return true;
+            }
             continue;
         }
     }
 
     free(filter_map);
     free(roms);
+    return false;
 }
 
 /* ── ROM detail screen ───────────────────────────────────── */
 
-static void show_rom_detail_screen(const rom_file *rom,
+static bool show_rom_detail_screen(const rom_file *rom,
                                     const console_dir *console,
                                     library_mode mode,
                                     const app_settings *settings) {
@@ -541,6 +578,13 @@ static void show_rom_detail_screen(const rom_file *rom,
                     queue_add_artwork_forced(rom, console);
                 else
                     queue_add_cheat_forced(rom, console);
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Re-queued \"%s\" for %s.",
+                         rom->display, is_art ? "artwork" : "cheats");
+                if (show_queued_brief(msg)) {
+                    free(cheat_text);
+                    return true;
+                }
             }
         } else {
             queue_set_settings(settings);
@@ -553,7 +597,10 @@ static void show_rom_detail_screen(const rom_file *rom,
                 char msg[256];
                 snprintf(msg, sizeof(msg), "Queued \"%s\" for %s.",
                          rom->display, is_art ? "artwork" : "cheats");
-                show_brief(msg);
+                if (show_queued_brief(msg)) {
+                    free(cheat_text);
+                    return true;
+                }
             } else {
                 show_brief("Already queued.");
             }
@@ -561,11 +608,12 @@ static void show_rom_detail_screen(const rom_file *rom,
     }
 
     free(cheat_text);
+    return false;
 }
 
 /* ── Library: System list ─────────────────────────────────── */
 
-static void show_library_screen(library_mode mode) {
+static bool show_library_screen(library_mode mode) {
     app_settings settings = load_settings();
 
     console_dir *consoles = NULL;
@@ -574,7 +622,7 @@ static void show_library_screen(library_mode mode) {
         show_error("No ROM folders found.");
         free(consoles);
         free_settings(&settings);
-        return;
+        return false;
     }
 
     /* Build menu names and compute stats, filtering by mode */
@@ -603,7 +651,7 @@ static void show_library_screen(library_mode mode) {
         free(stats);
         free(consoles);
         free_settings(&settings);
-        return;
+        return false;
     }
 
     /* Build labels (system name) and metadata (counts) */
@@ -653,7 +701,16 @@ static void show_library_screen(library_mode mode) {
         int real_idx = visible_map[sel];
 
         /* A: Open ROM list */
-        show_rom_list_screen(&consoles[real_idx], &settings, mode);
+        if (show_rom_list_screen(&consoles[real_idx], &settings, mode)) {
+            free(visible_map);
+            free(names);
+            free(labels);
+            free(meta);
+            free(stats);
+            free(consoles);
+            free_settings(&settings);
+            return true;
+        }
     }
 
     free(visible_map);
@@ -663,6 +720,7 @@ static void show_library_screen(library_mode mode) {
     free(stats);
     free(consoles);
     free_settings(&settings);
+    return false;
 }
 
 /* ── API Usage screen ─────────────────────────────────────── */
@@ -930,14 +988,14 @@ static void show_progress_screen(void) {
         /* Handle input */
         ap_input_event ev;
         bool quit = false;
-        bool clear = false;
+        bool x_pressed = false;
         bool show_detail = false;
         while (ap_poll_input(&ev)) {
             if (!ev.pressed) continue;
             switch (ev.button) {
             case AP_BTN_A:     show_detail = true; break;
             case AP_BTN_B:     quit = true; break;
-            case AP_BTN_X:     clear = true; break;
+            case AP_BTN_X:     x_pressed = true; break;
             case AP_BTN_Y:     filter = (filter + 1) % PROG_FILTER_COUNT;
                                selected = 0; scroll_offset = 0; break;
             case AP_BTN_DOWN:  selected++; break;
@@ -951,7 +1009,23 @@ static void show_progress_screen(void) {
         }
 
         if (quit) break;
-        if (clear && can_clear) queue_clear_done();
+        if (x_pressed && can_clear) {
+            queue_clear_done();
+        } else if (x_pressed && !can_clear) {
+            ap_footer_item cfooter[] = {
+                {AP_BTN_B, "No",  false},
+                {AP_BTN_A, "Yes", true},
+            };
+            ap_message_opts mopts = {
+                .message = "Cancel all downloads?\n\nIn-progress items will be stopped\nand pending items will be skipped.",
+                .footer = cfooter,
+                .footer_count = 2,
+            };
+            ap_confirm_result cres;
+            ap_confirmation(&mopts, &cres);
+            if (cres.confirmed)
+                queue_cancel_all();
+        }
 
         /* Get queue snapshot */
         queue_item *items = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
@@ -991,15 +1065,24 @@ static void show_progress_screen(void) {
             ap_draw_screen_title(title, NULL);
         }
 
-        /* Footer */
+        /* Footer — B position depends on screen width */
         ap_footer_item footer[5];
         int footer_count = 0;
-        if (selected_is_terminal)
-            footer[footer_count++] = (ap_footer_item){AP_BTN_A, "Details", false};
-        footer[footer_count++] = (ap_footer_item){AP_BTN_Y, "Filter", false};
-        footer[footer_count++] = (ap_footer_item){AP_BTN_B, "Back", false};
+        if (ap_get_screen_width() >= 1024) {
+            footer[footer_count++] = (ap_footer_item){AP_BTN_B, "Back", false};
+            if (selected_is_terminal)
+                footer[footer_count++] = (ap_footer_item){AP_BTN_A, "Details", false};
+            footer[footer_count++] = (ap_footer_item){AP_BTN_Y, "Filter", false};
+        } else {
+            if (selected_is_terminal)
+                footer[footer_count++] = (ap_footer_item){AP_BTN_A, "Details", false};
+            footer[footer_count++] = (ap_footer_item){AP_BTN_Y, "Filter", false};
+            footer[footer_count++] = (ap_footer_item){AP_BTN_B, "Back", false};
+        }
         if (can_clear)
             footer[footer_count++] = (ap_footer_item){AP_BTN_X, "Clear Done", true};
+        else if (queue_is_active())
+            footer[footer_count++] = (ap_footer_item){AP_BTN_X, "Cancel All", true};
         ap_draw_footer(footer, footer_count);
 
         /* Adjust scroll to keep selection visible */
@@ -1462,8 +1545,12 @@ void run_app(void) {
     for (;;) {
         main_action action = show_main_menu();
         switch (action) {
-        case MAIN_SCRAPE_ART:      show_library_screen(LIB_MODE_ART); break;
-        case MAIN_DOWNLOAD_CHEATS: show_library_screen(LIB_MODE_CHEAT); break;
+        case MAIN_SCRAPE_ART:
+            if (show_library_screen(LIB_MODE_ART)) show_progress_screen();
+            break;
+        case MAIN_DOWNLOAD_CHEATS:
+            if (show_library_screen(LIB_MODE_CHEAT)) show_progress_screen();
+            break;
         case MAIN_PROGRESS:        show_progress_screen(); break;
         case MAIN_API_USAGE:       show_api_usage_screen(); break;
         case MAIN_SETTINGS:        show_settings_screen(); break;

@@ -103,6 +103,9 @@ bool queue_check_dirty(void);
 /* Remove all completed/failed items from the queue. */
 void queue_clear_done(void);
 
+/* Cancel all in-progress and pending items, stop workers, allow restart. */
+void queue_cancel_all(void);
+
 /* Copy current queue items into caller-provided array. Returns count. */
 int queue_snapshot(queue_item *out, int max_items);
 
