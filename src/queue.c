@@ -23,6 +23,7 @@
 
 static queue_item     *g_items;
 static int             g_count = 0;
+static uint32_t        g_next_item_id = 1;
 static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool            g_dirty = false;
 static bool            g_manager_started = false;
@@ -292,11 +293,32 @@ typedef struct {
 } cheat_cache_entry;
 
 #define MAX_CHEAT_CACHE 64
+static pthread_mutex_t g_cheat_state_mutex = PTHREAD_MUTEX_INITIALIZER;
 static cheat_cache_entry g_cheat_cache[MAX_CHEAT_CACHE];
 static int               g_cheat_cache_count = 0;
 static bool              g_cheat_repo_ready = false;
 
-static cheat_list *get_cached_cheat_list(const char *system_tag) {
+static void clear_cheat_repo_state_locked(void) {
+    for (int i = 0; i < g_cheat_cache_count; i++) {
+        if (g_cheat_cache[i].valid)
+            cheat_list_free(&g_cheat_cache[i].list);
+    }
+
+    memset(g_cheat_cache, 0, sizeof(g_cheat_cache));
+    g_cheat_cache_count = 0;
+    g_cheat_repo_ready = false;
+}
+
+static bool cheat_repo_is_ready(void) {
+    bool ready;
+
+    pthread_mutex_lock(&g_cheat_state_mutex);
+    ready = g_cheat_repo_ready;
+    pthread_mutex_unlock(&g_cheat_state_mutex);
+    return ready;
+}
+
+static cheat_list *get_cached_cheat_list_locked(const char *system_tag) {
     for (int i = 0; i < g_cheat_cache_count; i++) {
         if (strcmp(g_cheat_cache[i].tag, system_tag) == 0 &&
             g_cheat_cache[i].valid) {
@@ -308,50 +330,68 @@ static cheat_list *get_cached_cheat_list(const char *system_tag) {
 
 static cheat_list *ensure_cheat_list(const char *system_tag,
                                      atomic_int *interrupt_signal) {
-    cheat_list *cached = get_cached_cheat_list(system_tag);
+    pthread_mutex_lock(&g_cheat_state_mutex);
+
+    cheat_list *cached = get_cached_cheat_list_locked(system_tag);
     if (cached)
+    {
+        pthread_mutex_unlock(&g_cheat_state_mutex);
         return cached;
+    }
 
     const char *libretro_dir_name = libretro_dir(system_tag);
-    if (!libretro_dir_name)
+    if (!libretro_dir_name) {
+        pthread_mutex_unlock(&g_cheat_state_mutex);
         return NULL;
+    }
 
     if (!g_cheat_repo_ready) {
         if (!is_repo_initialized()) {
             int ret = init_cheat_repo(interrupt_signal, NULL, NULL, 0.0f, 0.0f);
-            if (ret != CHEAT_OP_OK)
+            if (ret != CHEAT_OP_OK) {
+                pthread_mutex_unlock(&g_cheat_state_mutex);
                 return NULL;
+            }
         } else {
             int ret = update_cheat_repo(interrupt_signal, NULL, NULL, 0.0f, 0.0f);
-            if (ret == CHEAT_OP_BUSY)
+            if (ret == CHEAT_OP_BUSY) {
+                pthread_mutex_unlock(&g_cheat_state_mutex);
                 return NULL;
+            }
         }
         g_cheat_repo_ready = true;
     }
 
     if (ensure_system_checked_out(libretro_dir_name, interrupt_signal,
                                   NULL, NULL, 0.0f, 0.0f) != CHEAT_OP_OK) {
+        pthread_mutex_unlock(&g_cheat_state_mutex);
         return NULL;
     }
 
-    if (g_cheat_cache_count >= MAX_CHEAT_CACHE)
+    if (g_cheat_cache_count >= MAX_CHEAT_CACHE) {
+        pthread_mutex_unlock(&g_cheat_state_mutex);
         return NULL;
+    }
 
     cheat_cache_entry *entry = &g_cheat_cache[g_cheat_cache_count];
+    memset(entry, 0, sizeof(*entry));
     snprintf(entry->tag, sizeof(entry->tag), "%s", system_tag);
     if (build_cheat_list(libretro_dir_name, &entry->list) != 0) {
-        entry->valid = false;
+        memset(entry, 0, sizeof(*entry));
+        pthread_mutex_unlock(&g_cheat_state_mutex);
         return NULL;
     }
 
     entry->valid = true;
     g_cheat_cache_count++;
-    return &entry->list;
+    cheat_list *list = &entry->list;
+    pthread_mutex_unlock(&g_cheat_state_mutex);
+    return list;
 }
 
 static void process_cheat_item(int queue_index, app_settings *settings) {
     queue_item item;
-    queue_item_status initial_status = g_cheat_repo_ready
+    queue_item_status initial_status = cheat_repo_is_ready()
         ? QUEUE_MATCHING
         : QUEUE_CLONING;
 
@@ -655,13 +695,16 @@ void queue_init(void) {
     if (!g_items)
         g_items = calloc(QUEUE_MAX_ITEMS, sizeof(queue_item));
     g_count = 0;
+    g_next_item_id = 1;
     g_dirty = false;
     g_manager_started = false;
     g_worker_running = false;
     pthread_mutex_unlock(&g_mutex);
 
-    g_cheat_repo_ready = false;
-    g_cheat_cache_count = 0;
+    pthread_mutex_lock(&g_cheat_state_mutex);
+    clear_cheat_repo_state_locked();
+    pthread_mutex_unlock(&g_cheat_state_mutex);
+
     g_settings_valid = false;
     atomic_init(&g_interrupt, 0);
 }
@@ -683,12 +726,9 @@ void queue_shutdown(void) {
         pthread_mutex_unlock(&g_mutex);
     }
 
-    for (int i = 0; i < g_cheat_cache_count; i++) {
-        if (g_cheat_cache[i].valid)
-            cheat_list_free(&g_cheat_cache[i].list);
-    }
-    g_cheat_cache_count = 0;
-    g_cheat_repo_ready = false;
+    pthread_mutex_lock(&g_cheat_state_mutex);
+    clear_cheat_repo_state_locked();
+    pthread_mutex_unlock(&g_cheat_state_mutex);
 
     pthread_mutex_lock(&g_settings_mutex);
     if (g_settings_valid) {
@@ -802,6 +842,9 @@ static bool queue_add_artwork_internal(const rom_file *rom,
 
     queue_item *item = &g_items[g_count++];
     memset(item, 0, sizeof(*item));
+    item->id = g_next_item_id++;
+    if (g_next_item_id == 0)
+        g_next_item_id = 1;
     item->type = QUEUE_TYPE_ARTWORK;
     snprintf(item->rom_display, sizeof(item->rom_display), "%s", rom->display);
     snprintf(item->rom_path, sizeof(item->rom_path), "%s", rom->path);
@@ -843,6 +886,9 @@ static bool queue_add_cheat_internal(const rom_file *rom,
 
     queue_item *item = &g_items[g_count++];
     memset(item, 0, sizeof(*item));
+    item->id = g_next_item_id++;
+    if (g_next_item_id == 0)
+        g_next_item_id = 1;
     item->type = QUEUE_TYPE_CHEAT;
     snprintf(item->rom_display, sizeof(item->rom_display), "%s", rom->display);
     snprintf(item->rom_path, sizeof(item->rom_path), "%s", rom->path);
@@ -1025,6 +1071,21 @@ void queue_cancel_all(void) {
 
     /* Reset interrupt so queue can restart later */
     atomic_store(&g_interrupt, 0);
+}
+
+bool queue_invalidate_cheat_repo_state(void) {
+    bool can_invalidate;
+
+    pthread_mutex_lock(&g_mutex);
+    can_invalidate = !queue_has_non_terminal_locked();
+    pthread_mutex_unlock(&g_mutex);
+    if (!can_invalidate)
+        return false;
+
+    pthread_mutex_lock(&g_cheat_state_mutex);
+    clear_cheat_repo_state_locked();
+    pthread_mutex_unlock(&g_cheat_state_mutex);
+    return true;
 }
 
 int queue_snapshot(queue_item *out, int max_items) {

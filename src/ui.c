@@ -8,13 +8,16 @@
 #include "apostrophe.h"
 #include "apostrophe_widgets.h"
 
+#include <errno.h>
 #include <dirent.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 /* Suppress GCC warnings about snprintf truncation when combining
    PATH_MAX-sized strings — truncation is safe by design.
@@ -943,7 +946,7 @@ static int progress_snapshot(ap_queue_item *buf, int max, void *userdata) {
 
         buf[i].status   = map_queue_status(items[i].status);
         buf[i].progress = -1.0f; /* no inline progress bar */
-        buf[i].userdata = NULL;
+        buf[i].userdata = (void *)(uintptr_t)items[i].id;
     }
 
     free(items);
@@ -952,13 +955,17 @@ static int progress_snapshot(ap_queue_item *buf, int max, void *userdata) {
 
 static void progress_on_detail(const ap_queue_item *item, void *userdata) {
     (void)userdata;
+    uint32_t item_id = (uint32_t)(uintptr_t)item->userdata;
+    if (item_id == 0)
+        return;
+
     /* Find the matching queue item to pass to show_item_detail */
     queue_item *items = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
     if (!items) return;
 
     int count = queue_snapshot(items, QUEUE_MAX_ITEMS);
     for (int i = 0; i < count; i++) {
-        if (strcmp(items[i].rom_display, item->title) == 0 &&
+        if (items[i].id == item_id &&
             is_item_terminal(items[i].status)) {
             show_item_detail(&items[i]);
             break;
@@ -1200,13 +1207,84 @@ static void edit_artwork_options(app_settings *settings) {
 
 /* ── Clear cheat cache ────────────────────────────────────── */
 
+typedef struct {
+    float *progress;
+    char   error[256];
+} clear_cache_ctx;
+
+static int remove_path_recursive(const char *path, char *error, size_t error_len) {
+    struct stat st;
+    if (lstat(path, &st) != 0) {
+        if (error && error_len > 0) {
+            snprintf(error, error_len, "Failed to inspect cache entry:\n%s",
+                     strerror(errno));
+        }
+        return -1;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        DIR *dir = opendir(path);
+        if (!dir) {
+            if (error && error_len > 0) {
+                snprintf(error, error_len, "Failed to open cache directory:\n%s",
+                         strerror(errno));
+            }
+            return -1;
+        }
+
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                continue;
+
+            char child[PATH_MAX];
+            snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+            if (remove_path_recursive(child, error, error_len) != 0) {
+                closedir(dir);
+                return -1;
+            }
+        }
+        closedir(dir);
+
+        if (rmdir(path) != 0) {
+            if (error && error_len > 0) {
+                snprintf(error, error_len, "Failed to remove cache directory:\n%s",
+                         strerror(errno));
+            }
+            return -1;
+        }
+        return 0;
+    }
+
+    if (unlink(path) != 0) {
+        if (error && error_len > 0) {
+            snprintf(error, error_len, "Failed to remove cache file:\n%s",
+                     strerror(errno));
+        }
+        return -1;
+    }
+    return 0;
+}
+
 static int clear_cache_worker(void *userdata) {
-    float *progress = (float *)userdata;
+    clear_cache_ctx *ctx = (clear_cache_ctx *)userdata;
+    float *progress = ctx ? ctx->progress : NULL;
     char repo[PATH_MAX];
     get_cheat_repo_path(repo, sizeof(repo));
 
+    if (ctx)
+        ctx->error[0] = '\0';
+
     DIR *dir = opendir(repo);
     if (!dir) {
+        if (errno != ENOENT) {
+            if (ctx) {
+                snprintf(ctx->error, sizeof(ctx->error),
+                         "Failed to open cheat cache directory:\n%s",
+                         strerror(errno));
+            }
+            return -1;
+        }
         if (progress) *progress = 1.0f;
         return 0;
     }
@@ -1223,7 +1301,14 @@ static int clear_cache_worker(void *userdata) {
 
     if (total == 0) {
         closedir(dir);
-        rmdir(repo);
+        if (rmdir(repo) != 0 && errno != ENOENT) {
+            if (ctx) {
+                snprintf(ctx->error, sizeof(ctx->error),
+                         "Failed to remove cheat cache directory:\n%s",
+                         strerror(errno));
+            }
+            return -1;
+        }
         if (progress) *progress = 1.0f;
         return 0;
     }
@@ -1234,19 +1319,24 @@ static int clear_cache_worker(void *userdata) {
             continue;
         char path[PATH_MAX];
         snprintf(path, sizeof(path), "%s/%s", repo, entry->d_name);
-        struct stat st;
-        if (lstat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            char rm_cmd[PATH_MAX + 10];
-            snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf '%s'", path);
-            (void)system(rm_cmd);
-        } else {
-            unlink(path);
+        if (remove_path_recursive(path,
+                                  ctx ? ctx->error : NULL,
+                                  ctx ? sizeof(ctx->error) : 0) != 0) {
+            closedir(dir);
+            return -1;
         }
         done++;
         if (progress) *progress = (float)done / (float)total;
     }
     closedir(dir);
-    rmdir(repo);
+    if (rmdir(repo) != 0 && errno != ENOENT) {
+        if (ctx) {
+            snprintf(ctx->error, sizeof(ctx->error),
+                     "Failed to remove cheat cache directory:\n%s",
+                     strerror(errno));
+        }
+        return -1;
+    }
     if (progress) *progress = 1.0f;
     return 0;
 }
@@ -1272,12 +1362,24 @@ static void clear_cheat_cache(void) {
         return;
 
     float progress = 0.0f;
+    clear_cache_ctx ctx = {.progress = &progress};
     ap_process_opts proc_opts = {
         .message = "Clearing cheat cache...",
         .show_progress = true,
         .progress = &progress,
     };
-    ap_process_message(&proc_opts, clear_cache_worker, &progress);
+    if (ap_process_message(&proc_opts, clear_cache_worker, &ctx) != 0) {
+        show_error(ctx.error[0]
+            ? ctx.error
+            : "Failed to clear the cheat cache.");
+        return;
+    }
+
+    if (!queue_invalidate_cheat_repo_state()) {
+        show_error("Cheat cache was cleared, but the in-memory queue state\n"
+                   "could not be refreshed.\n\nRestart the app before downloading\n"
+                   "cheats again.");
+    }
 }
 
 /* ── Settings screen ──────────────────────────────────────── */

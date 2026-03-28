@@ -2,6 +2,7 @@
 #define QUEUE_H
 
 #include "device.h"
+#include <stdint.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stdatomic.h>
@@ -31,6 +32,7 @@ typedef enum {
 } queue_item_status;
 
 typedef struct {
+    uint32_t                  id;          /* Stable in-session queue identity */
     queue_item_type           type;
     char                      rom_display[256];
     char                      rom_path[PATH_MAX];
@@ -105,6 +107,9 @@ void queue_clear_done(void);
 
 /* Cancel all in-progress and pending items, stop workers, allow restart. */
 void queue_cancel_all(void);
+
+/* Free cached cheat-repo state when no items are running. */
+bool queue_invalidate_cheat_repo_state(void);
 
 /* Copy current queue items into caller-provided array. Returns count. */
 int queue_snapshot(queue_item *out, int max_items);
