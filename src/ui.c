@@ -247,7 +247,18 @@ static bool show_rom_list_screen(const console_dir *console,
         return false;
     }
 
-    rom_filter filter      = ROM_FILTER_ALL;
+    /* Default to Missing filter, but fall back to All if nothing is missing */
+    rom_filter filter = ROM_FILTER_MISSING;
+    {
+        bool has_missing = false;
+        for (int i = 0; i < rom_count; i++) {
+            bool inst = (mode == LIB_MODE_ART)
+                ? artwork_exists(roms[i].path, roms[i].display)
+                : cheat_exists(console->tag, roms[i].display);
+            if (!inst) { has_missing = true; break; }
+        }
+        if (!has_missing) filter = ROM_FILTER_ALL;
+    }
     int        initial_idx = 0;
     int        visible_start = 0;
 
@@ -338,7 +349,7 @@ static bool show_rom_list_screen(const console_dir *console,
 
         int sel = result.selected_index;
         if (sel < 0 || sel >= visible_count) {
-            if (visible_count == 0) break; /* empty filtered list, only B works */
+            if (visible_count == 0) continue; /* empty filtered list, let user change filter */
             break;
         }
         int real = filter_map[sel];
