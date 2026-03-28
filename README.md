@@ -22,8 +22,8 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 - Live progress tracking with thread count, ETA, and API quota display
 - Configurable artwork priority (20 media types available including covers, wheels, fan art, and more)
 - Configurable region priority (USA, Europe, Japan, France, Germany, Spain, Italy, Portugal, World, and more)
-- Supports 46 systems via ScreenScraper (33 bundled + 13 community paks, plus `P8` alias support for PICO-8 folders)
-- Supports 32 systems for cheat downloading via Libretro
+- Supports 47 systems via ScreenScraper (33 bundled + 14 community paks, plus `P8` alias support for PICO-8 folders)
+- Supports 33 systems for cheat downloading via Libretro
 - Shows detailed scraping summary (Total / Found / Not Found / Errors)
 - Fully supports multi-disc games, CUE/BIN disc images, and zip-archived ROMs
 - Handles MD5 hashing with automatic fallback to filename-only matching
@@ -57,7 +57,7 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 
 Supported systems for artwork (46 total):
 - **Nintendo:** Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance (and mGBA), SNES/SFC, Virtual Boy, Famicom Disk System, Nintendo 64, Nintendo DS
-- **Sega:** Master System, Genesis/MD, Game Gear, Mega-CD, 32X, Dreamcast
+- **Sega:** Master System, Genesis/MD, Game Gear, Mega-CD, 32X, Dreamcast, Saturn
 - **Sony:** PlayStation, PlayStation Portable
 - **Atari:** 2600, 5200, 7800, Lynx, Jaguar, Atari 800
 - **NEC:** PC Engine/TurboGrafx, PC Engine SuperGrafx
@@ -71,8 +71,8 @@ Supported systems for artwork (46 total):
 
 The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name. When multiple cheat files exist for the same game (e.g. different regions), ScrapeGoat picks the one that best matches your ROM's region and your configured region priority. See [How Matching Works](#how-matching-works) for details.
 
-Supported systems for cheats (32 total, based on current Libretro `cht/` directories):
-Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA), SNES/SFC, Super Famicom (Supafaust), Super Game Boy, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, Sega 32X, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600, Atari 5200, Atari 7800, Lynx, ColecoVision, MSX, Nintendo 64, Nintendo DS, PlayStation Portable, Dreamcast, Atari Jaguar, PC Engine SuperGrafx, Intellivision, Atari 800, TIC-80
+Supported systems for cheats (33 total, based on current Libretro `cht/` directories):
+Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA), SNES/SFC, Super Famicom (Supafaust), Super Game Boy, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, Sega 32X, Sega Saturn, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600, Atari 5200, Atari 7800, Lynx, ColecoVision, MSX, Nintendo 64, Nintendo DS, PlayStation Portable, Dreamcast, Atari Jaguar, PC Engine SuperGrafx, Intellivision, Atari 800, TIC-80
 
 ### Settings
 
@@ -366,7 +366,7 @@ The `.pak.zip` includes:
 
 ## Acknowledgements
 
-Built with [Gabagool](https://github.com/BrandonKowalski/gabagool) by [@BrandonKowalski](https://github.com/BrandonKowalski).
+Built with [Apostrophe](https://github.com/Helaas/Apostrophe). The original Go version of this pak was built with [Gabagool](https://github.com/BrandonKowalski/gabagool) by [@BrandonKowalski](https://github.com/BrandonKowalski).
 
 Uses the [Libretro cheat database](https://github.com/libretro/libretro-database) and [ScreenScraper.fr](https://www.screenscraper.fr/) API.
 
