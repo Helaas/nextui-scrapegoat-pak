@@ -311,10 +311,10 @@ static bool show_rom_list_screen(const console_dir *console,
         if (ap_get_screen_width() >= 1024) {
             footer[0] = (ap_footer_item){AP_BTN_B, "BACK",        false};
             footer[1] = (ap_footer_item){AP_BTN_X, "FILTER",      false};
-            footer[2] = (ap_footer_item){AP_BTN_Y, "QUEUE SHOWN", false};
+            footer[2] = (ap_footer_item){AP_BTN_Y, "ADD QUEUE", false};
         } else {
             footer[0] = (ap_footer_item){AP_BTN_X, "FILTER",      false};
-            footer[1] = (ap_footer_item){AP_BTN_Y, "QUEUE SHOWN", false};
+            footer[1] = (ap_footer_item){AP_BTN_Y, "ADD QUEUE", false};
             footer[2] = (ap_footer_item){AP_BTN_B, "BACK",        false};
         }
         footer[3] = (ap_footer_item){AP_BTN_A, "OPEN", true};
@@ -567,35 +567,17 @@ static bool show_rom_detail_screen(const rom_file *rom,
 
     if (result.action == AP_DETAIL_ACTION && !is_queued) {
         if (is_installed) {
-            /* Confirm re-download */
-            char prompt[256];
-            snprintf(prompt, sizeof(prompt),
-                     "%s already installed. Re-download?",
-                     is_art ? "Artwork" : "Cheats");
-            ap_footer_item cf[] = {
-                {AP_BTN_B, "NO",  false},
-                {AP_BTN_A, "YES", true},
-            };
-            ap_message_opts mopts = {
-                .message      = prompt,
-                .footer       = cf,
-                .footer_count = 2,
-            };
-            ap_confirm_result cres;
-            ap_confirmation(&mopts, &cres);
-            if (cres.confirmed) {
-                queue_set_settings(settings);
-                if (is_art)
-                    queue_add_artwork_forced(rom, console);
-                else
-                    queue_add_cheat_forced(rom, console);
-                char msg[256];
-                snprintf(msg, sizeof(msg), "Re-queued \"%s\" for %s.",
-                         rom->display, is_art ? "artwork" : "cheats");
-                if (show_queued_brief(msg)) {
-                    free(cheat_text);
-                    return true;
-                }
+            queue_set_settings(settings);
+            if (is_art)
+                queue_add_artwork_forced(rom, console);
+            else
+                queue_add_cheat_forced(rom, console);
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Re-queued \"%s\" for %s.",
+                     rom->display, is_art ? "artwork" : "cheats");
+            if (show_queued_brief(msg)) {
+                free(cheat_text);
+                return true;
             }
         } else {
             queue_set_settings(settings);
