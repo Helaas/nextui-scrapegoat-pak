@@ -41,14 +41,14 @@ static bool show_rom_detail_screen(const rom_file *rom,
 /* ── Helpers ──────────────────────────────────────────────── */
 
 static void show_error(const char *message) {
-    ap_footer_item footer[] = {{AP_BTN_B, "Back", false}};
+    ap_footer_item footer[] = {{AP_BTN_B, "BACK", false}};
     ap_message_opts opts = {.message = message, .footer = footer, .footer_count = 1};
     ap_confirm_result result;
     ap_confirmation(&opts, &result);
 }
 
 static void show_warning(const char *message) {
-    ap_footer_item footer[] = {{AP_BTN_A, "Continue", false}};
+    ap_footer_item footer[] = {{AP_BTN_A, "CONTINUE", false}};
     ap_message_opts opts = {.message = message, .footer = footer, .footer_count = 1};
     ap_confirm_result result;
     ap_confirmation(&opts, &result);
@@ -64,8 +64,8 @@ static void show_brief(const char *message) {
 /* Returns true if user chose "Go to Downloads". */
 static bool show_queued_brief(const char *message) {
     ap_footer_item footer[] = {
-        {AP_BTN_B, "Back",            false},
-        {AP_BTN_A, "Go to Downloads", true},
+        {AP_BTN_B, "BACK",            false},
+        {AP_BTN_A, "GO TO DOWNLOADS", true},
     };
     ap_message_opts opts = {
         .message      = message,
@@ -169,8 +169,8 @@ static main_action show_main_menu(void) {
         {.label = "Settings"},
     };
     ap_footer_item footer[] = {
-        {AP_BTN_B, "Quit", false},
-        {AP_BTN_A, "Select", true},
+        {AP_BTN_B, "QUIT", false},
+        {AP_BTN_A, "SELECT", true},
     };
 
     ap_list_opts opts = ap_list_default_opts("ScrapeGoat", items, 5);
@@ -309,15 +309,15 @@ static bool show_rom_list_screen(const console_dir *console,
         /* Footer: B position depends on screen width */
         ap_footer_item footer[4];
         if (ap_get_screen_width() >= 1024) {
-            footer[0] = (ap_footer_item){AP_BTN_B, "Back",        false};
-            footer[1] = (ap_footer_item){AP_BTN_X, "Filter",      false};
-            footer[2] = (ap_footer_item){AP_BTN_Y, "Queue shown", false};
+            footer[0] = (ap_footer_item){AP_BTN_B, "BACK",        false};
+            footer[1] = (ap_footer_item){AP_BTN_X, "FILTER",      false};
+            footer[2] = (ap_footer_item){AP_BTN_Y, "QUEUE SHOWN", false};
         } else {
-            footer[0] = (ap_footer_item){AP_BTN_X, "Filter",      false};
-            footer[1] = (ap_footer_item){AP_BTN_Y, "Queue shown", false};
-            footer[2] = (ap_footer_item){AP_BTN_B, "Back",        false};
+            footer[0] = (ap_footer_item){AP_BTN_X, "FILTER",      false};
+            footer[1] = (ap_footer_item){AP_BTN_Y, "QUEUE SHOWN", false};
+            footer[2] = (ap_footer_item){AP_BTN_B, "BACK",        false};
         }
-        footer[3] = (ap_footer_item){AP_BTN_A, "Open", true};
+        footer[3] = (ap_footer_item){AP_BTN_A, "OPEN", true};
 
         ap_list_opts opts = ap_list_default_opts(title, items,
                                                   visible_count > 0 ? visible_count : 0);
@@ -385,8 +385,8 @@ static bool show_rom_list_screen(const console_dir *console,
                     {.label = "Re-download all (including installed)"},
                 };
                 ap_footer_item cf[] = {
-                    {AP_BTN_B, "Cancel", false},
-                    {AP_BTN_A, "Select", true},
+                    {AP_BTN_B, "CANCEL", false},
+                    {AP_BTN_A, "SELECT", true},
                 };
                 char choice_title[64];
                 snprintf(choice_title, sizeof(choice_title),
@@ -546,10 +546,10 @@ static bool show_rom_detail_screen(const rom_file *rom,
     }
 
     /* Footer: B=Back, A=Queue (or Re-download) */
-    const char *action_label = is_queued ? "Queued" :
-                               is_installed ? "Re-download" : "Queue";
+    const char *action_label = is_queued ? "QUEUED" :
+                               is_installed ? "RE-DOWNLOAD" : "QUEUE";
     ap_footer_item footer[] = {
-        {AP_BTN_B, "Back",       false},
+        {AP_BTN_B, "BACK",       false},
         {AP_BTN_A, action_label, true},
     };
     int footer_count = is_queued ? 1 : 2; /* hide A if already queued */
@@ -573,8 +573,8 @@ static bool show_rom_detail_screen(const rom_file *rom,
                      "%s already installed. Re-download?",
                      is_art ? "Artwork" : "Cheats");
             ap_footer_item cf[] = {
-                {AP_BTN_B, "No",  false},
-                {AP_BTN_A, "Yes", true},
+                {AP_BTN_B, "NO",  false},
+                {AP_BTN_A, "YES", true},
             };
             ap_message_opts mopts = {
                 .message      = prompt,
@@ -688,8 +688,8 @@ static bool show_library_screen(library_mode mode) {
         }
 
         ap_footer_item footer[] = {
-            {AP_BTN_A, "Open", true},
-            {AP_BTN_B, "Back", false},
+            {AP_BTN_A, "OPEN", true},
+            {AP_BTN_B, "BACK", false},
         };
 
         ap_list_opts opts = ap_list_default_opts(title, items, visible_count);
@@ -763,7 +763,7 @@ static void show_api_usage_screen(void) {
         .info_count = 4,
     }};
     ap_footer_item footer[] = {
-        {AP_BTN_B, "Back", false},
+        {AP_BTN_B, "BACK", false},
     };
     ap_detail_opts opts = {
         .title         = "API Usage",
@@ -792,25 +792,6 @@ static const char *queue_status_text(queue_item_status status) {
     case QUEUE_SKIPPED:     return "Skipped";
     }
     return "?";
-}
-
-static ap_color status_color(queue_item_status status, const ap_theme *theme) {
-    switch (status) {
-    case QUEUE_DONE:
-    case QUEUE_SKIPPED:
-        return (ap_color){100, 200, 100, 255}; /* green */
-    case QUEUE_NOT_FOUND:
-    case QUEUE_ERROR:
-        return (ap_color){220, 100, 100, 255}; /* red */
-    case QUEUE_SEARCHING:
-    case QUEUE_DOWNLOADING:
-    case QUEUE_CLONING:
-    case QUEUE_MATCHING:
-        return (ap_color){220, 200, 80, 255};  /* yellow */
-    case QUEUE_IDLE:
-    default:
-        return theme->hint;
-    }
 }
 
 static bool is_item_terminal(queue_item_status status) {
@@ -925,7 +906,7 @@ static void show_item_detail(const queue_item *item) {
     }
 
     ap_footer_item footer[] = {
-        {AP_BTN_B, "Back", false},
+        {AP_BTN_B, "BACK", false},
     };
 
     ap_detail_opts opts = {
@@ -942,246 +923,102 @@ static void show_item_detail(const queue_item *item) {
     free(cheat_text);
 }
 
-typedef enum {
-    PROG_FILTER_ALL = 0,
-    PROG_FILTER_IN_PROGRESS,
-    PROG_FILTER_DONE,
-    PROG_FILTER_FAILED,
-    PROG_FILTER_COUNT,
-} prog_filter;
+/* ── Progress screen (ap_queue_viewer) ────────────────────── */
 
-static const char *prog_filter_name(prog_filter f) {
-    switch (f) {
-    case PROG_FILTER_ALL:         return "All";
-    case PROG_FILTER_IN_PROGRESS: return "In Progress";
-    case PROG_FILTER_DONE:        return "Done";
-    case PROG_FILTER_FAILED:      return "Failed";
-    default:                      return "All";
+static ap_queue_status map_queue_status(queue_item_status s) {
+    switch (s) {
+    case QUEUE_IDLE:        return AP_QUEUE_PENDING;
+    case QUEUE_SEARCHING:
+    case QUEUE_DOWNLOADING:
+    case QUEUE_CLONING:
+    case QUEUE_MATCHING:    return AP_QUEUE_RUNNING;
+    case QUEUE_DONE:        return AP_QUEUE_DONE;
+    case QUEUE_NOT_FOUND:
+    case QUEUE_ERROR:       return AP_QUEUE_FAILED;
+    case QUEUE_SKIPPED:     return AP_QUEUE_SKIPPED;
+    default:                return AP_QUEUE_PENDING;
     }
 }
 
-static bool prog_filter_matches(prog_filter f, queue_item_status status) {
-    switch (f) {
-    case PROG_FILTER_ALL:
-        return true;
-    case PROG_FILTER_IN_PROGRESS:
-        return status == QUEUE_IDLE || status == QUEUE_SEARCHING ||
-               status == QUEUE_DOWNLOADING || status == QUEUE_CLONING ||
-               status == QUEUE_MATCHING;
-    case PROG_FILTER_DONE:
-        return status == QUEUE_DONE || status == QUEUE_SKIPPED;
-    case PROG_FILTER_FAILED:
-        return status == QUEUE_NOT_FOUND || status == QUEUE_ERROR;
-    default:
-        return true;
+static int progress_snapshot(ap_queue_item *buf, int max, void *userdata) {
+    (void)userdata;
+    queue_item *items = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
+    if (!items) return 0;
+
+    int count = queue_snapshot(items, QUEUE_MAX_ITEMS);
+    if (count > max) count = max;
+
+    for (int i = 0; i < count; i++) {
+        memset(&buf[i], 0, sizeof(buf[i]));
+        snprintf(buf[i].title, sizeof(buf[i].title), "%s", items[i].rom_display);
+
+        const char *type_str = items[i].type == QUEUE_TYPE_ARTWORK ? "art" : "cht";
+        snprintf(buf[i].subtitle, sizeof(buf[i].subtitle), "%s  [%s]",
+                 items[i].system_display, type_str);
+
+        snprintf(buf[i].status_text, sizeof(buf[i].status_text), "%s",
+                 queue_status_text(items[i].status));
+
+        buf[i].status   = map_queue_status(items[i].status);
+        buf[i].progress = -1.0f; /* no inline progress bar */
+        buf[i].userdata = NULL;
     }
+
+    free(items);
+    return count;
+}
+
+static void progress_on_detail(const ap_queue_item *item, void *userdata) {
+    (void)userdata;
+    /* Find the matching queue item to pass to show_item_detail */
+    queue_item *items = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
+    if (!items) return;
+
+    int count = queue_snapshot(items, QUEUE_MAX_ITEMS);
+    for (int i = 0; i < count; i++) {
+        if (strcmp(items[i].rom_display, item->title) == 0 &&
+            is_item_terminal(items[i].status)) {
+            show_item_detail(&items[i]);
+            break;
+        }
+    }
+    free(items);
+}
+
+static void progress_on_cancel(void *userdata) {
+    (void)userdata;
+    ap_footer_item cfooter[] = {
+        {AP_BTN_B, "NO",  false},
+        {AP_BTN_A, "YES", true},
+    };
+    ap_message_opts mopts = {
+        .message = "Cancel all downloads?\n\nIn-progress items will be stopped\n"
+                   "and pending items will be skipped.",
+        .footer = cfooter,
+        .footer_count = 2,
+    };
+    ap_confirm_result cres;
+    ap_confirmation(&mopts, &cres);
+    if (cres.confirmed)
+        queue_cancel_all();
+}
+
+static void progress_on_clear(void *userdata) {
+    (void)userdata;
+    queue_clear_done();
 }
 
 static void show_progress_screen(void) {
-    int selected = 0;
-    int scroll_offset = 0;
-    prog_filter filter = PROG_FILTER_ALL;
-
-    for (;;) {
-        bool can_clear = !queue_is_active();
-
-        /* Compute layout early so visible_rows is available for page-skip */
-        const ap_theme *theme = ap_get_theme();
-        TTF_Font *font_large = ap_get_font(AP_FONT_LARGE);
-        TTF_Font *font_small = ap_get_font(AP_FONT_SMALL);
-        TTF_Font *font_tiny  = ap_get_font(AP_FONT_TINY);
-        int screen_w = ap_get_screen_width();
-        SDL_Rect content = ap_get_content_rect(true, true, false);
-        int row_height = TTF_FontHeight(font_large) + TTF_FontHeight(font_tiny) + ap_scale(8);
-        int visible_rows = content.h / row_height;
-        if (visible_rows < 1) visible_rows = 1;
-
-        /* Handle input */
-        ap_input_event ev;
-        bool quit = false;
-        bool x_pressed = false;
-        bool show_detail = false;
-        while (ap_poll_input(&ev)) {
-            if (!ev.pressed) continue;
-            switch (ev.button) {
-            case AP_BTN_A:     show_detail = true; break;
-            case AP_BTN_B:     quit = true; break;
-            case AP_BTN_X:     x_pressed = true; break;
-            case AP_BTN_Y:     filter = (filter + 1) % PROG_FILTER_COUNT;
-                               selected = 0; scroll_offset = 0; break;
-            case AP_BTN_DOWN:  selected++; break;
-            case AP_BTN_UP:    selected--; break;
-            case AP_BTN_L1:    /* fall through */
-            case AP_BTN_LEFT:  selected -= visible_rows; break;
-            case AP_BTN_R1:    /* fall through */
-            case AP_BTN_RIGHT: selected += visible_rows; break;
-            default: break;
-            }
-        }
-
-        if (quit) break;
-        if (x_pressed && can_clear) {
-            queue_clear_done();
-        } else if (x_pressed && !can_clear) {
-            ap_footer_item cfooter[] = {
-                {AP_BTN_B, "No",  false},
-                {AP_BTN_A, "Yes", true},
-            };
-            ap_message_opts mopts = {
-                .message = "Cancel all downloads?\n\nIn-progress items will be stopped\nand pending items will be skipped.",
-                .footer = cfooter,
-                .footer_count = 2,
-            };
-            ap_confirm_result cres;
-            ap_confirmation(&mopts, &cres);
-            if (cres.confirmed)
-                queue_cancel_all();
-        }
-
-        /* Get queue snapshot */
-        queue_item *items = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
-        int count = queue_snapshot(items, QUEUE_MAX_ITEMS);
-        queue_stats stats = queue_get_stats();
-        can_clear = !queue_is_active();
-
-        /* Build filter map */
-        int *filter_map = malloc(sizeof(int) * count);
-        int visible_count = 0;
-        for (int i = 0; i < count; i++) {
-            if (prog_filter_matches(filter, items[i].status))
-                filter_map[visible_count++] = i;
-        }
-
-        /* Clamp selection */
-        if (visible_count == 0) selected = 0;
-        else {
-            if (selected < 0) selected = 0;
-            if (selected >= visible_count) selected = visible_count - 1;
-        }
-
-        /* Show detail for selected item */
-        bool selected_is_terminal = visible_count > 0 &&
-            is_item_terminal(items[filter_map[selected]].status);
-        if (show_detail && selected_is_terminal) {
-            show_item_detail(&items[filter_map[selected]]);
-            free(filter_map);
-            free(items);
-            continue;
-        }
-
-        ap_draw_background();
-        {
-            char title[128];
-            snprintf(title, sizeof(title), "Downloads  [%s]", prog_filter_name(filter));
-            ap_draw_screen_title(title, NULL);
-        }
-
-        /* Footer — B position depends on screen width */
-        ap_footer_item footer[5];
-        int footer_count = 0;
-        if (ap_get_screen_width() >= 1024) {
-            footer[footer_count++] = (ap_footer_item){AP_BTN_B, "Back", false};
-            if (selected_is_terminal)
-                footer[footer_count++] = (ap_footer_item){AP_BTN_A, "Details", false};
-            footer[footer_count++] = (ap_footer_item){AP_BTN_Y, "Filter", false};
-        } else {
-            if (selected_is_terminal)
-                footer[footer_count++] = (ap_footer_item){AP_BTN_A, "Details", false};
-            footer[footer_count++] = (ap_footer_item){AP_BTN_Y, "Filter", false};
-            footer[footer_count++] = (ap_footer_item){AP_BTN_B, "Back", false};
-        }
-        if (can_clear)
-            footer[footer_count++] = (ap_footer_item){AP_BTN_X, "Clear Done", true};
-        else if (queue_is_active())
-            footer[footer_count++] = (ap_footer_item){AP_BTN_X, "Cancel All", true};
-        ap_draw_footer(footer, footer_count);
-
-        /* Adjust scroll to keep selection visible */
-        if (selected < scroll_offset)
-            scroll_offset = selected;
-        if (selected >= scroll_offset + visible_rows)
-            scroll_offset = selected - visible_rows + 1;
-        if (scroll_offset < 0) scroll_offset = 0;
-
-        if (visible_count == 0) {
-            /* Empty state */
-            const char *empty_msg = count == 0 ? "No items in queue." :
-                                    "No items match this filter.";
-            ap_draw_text(font_large, empty_msg,
-                         content.x + ap_scale(16), content.y + ap_scale(16), theme->hint);
-        } else {
-            /* Draw items */
-            int y = content.y;
-            int padding = ap_scale(12);
-            int status_max_w = ap_scale(120);
-
-            for (int vi = scroll_offset; vi < visible_count && vi < scroll_offset + visible_rows; vi++) {
-                queue_item *item = &items[filter_map[vi]];
-                int row_y = y;
-
-                /* Selection pill */
-                if (vi == selected) {
-                    ap_draw_pill(content.x, row_y, content.w, row_height, theme->highlight);
-                }
-
-                ap_color text_color = (vi == selected) ? theme->highlighted_text : theme->text;
-
-                /* Status (right) — measure first to correctly clip ROM name */
-                const char *status_str = queue_status_text(item->status);
-                ap_color sc = (vi == selected) ? theme->highlighted_text :
-                              status_color(item->status, theme);
-                int status_w;
-                TTF_SizeUTF8(font_small, status_str, &status_w, NULL);
-                int effective_status_w = status_w > status_max_w ? status_w : status_max_w;
-
-                /* ROM name (left) */
-                int name_max_w = content.w - effective_status_w - padding * 3;
-                ap_draw_text_ellipsized(font_large, item->rom_display,
-                    content.x + padding, row_y + ap_scale(2), text_color, name_max_w);
-
-                /* Draw status */
-                ap_draw_text(font_small, status_str,
-                    content.x + content.w - padding - status_w,
-                    row_y + ap_scale(4), sc);
-
-                /* System name (below, smaller) */
-                const char *type_str = item->type == QUEUE_TYPE_ARTWORK ? "art" : "cht";
-                char desc[300];
-                snprintf(desc, sizeof(desc), "%s  [%s]", item->system_display, type_str);
-                ap_color desc_color = (vi == selected) ? theme->highlighted_text : theme->hint;
-                ap_draw_text_ellipsized(font_tiny, desc,
-                    content.x + padding,
-                    row_y + TTF_FontHeight(font_large) + ap_scale(2),
-                    desc_color, name_max_w);
-
-                y += row_height;
-            }
-
-            /* Scrollbar */
-            if (visible_count > visible_rows) {
-                ap_draw_scrollbar(
-                    content.x + content.w - ap_scale(4),
-                    content.y, content.h,
-                    visible_rows, visible_count, scroll_offset);
-            }
-
-            /* Summary bar */
-            char summary[128];
-            snprintf(summary, sizeof(summary), "%d/%d complete, %d failed",
-                     stats.done, stats.total, stats.failed);
-            int summary_w;
-            TTF_SizeUTF8(font_tiny, summary, &summary_w, NULL);
-            ap_draw_text(font_tiny, summary,
-                (screen_w - summary_w) / 2,
-                content.y + content.h - TTF_FontHeight(font_tiny) - ap_scale(2),
-                theme->hint);
-        }
-
-        ap_present();
-        free(filter_map);
-        free(items);
-        SDL_Delay(33); /* ~30fps */
-    }
+    ap_queue_opts opts = {
+        .title     = "Downloads",
+        .snapshot  = progress_snapshot,
+        .max_items = QUEUE_MAX_ITEMS,
+        .userdata  = NULL,
+        .on_detail = progress_on_detail,
+        .on_cancel = progress_on_cancel,
+        .on_clear  = progress_on_clear,
+    };
+    ap_queue_viewer(&opts);
 }
 
 /* ── Settings screen ──────────────────────────────────────── */
@@ -1219,9 +1056,9 @@ static void edit_artwork_priority(app_settings *settings) {
     }
 
     ap_footer_item footer[] = {
-        {AP_BTN_B, "Cancel", false},
-        {AP_BTN_X, "Reorder", false},
-        {AP_BTN_START, "Save", true},
+        {AP_BTN_B, "CANCEL", false},
+        {AP_BTN_X, "REORDER", false},
+        {AP_BTN_START, "SAVE", true},
     };
 
     ap_list_opts opts = ap_list_default_opts("Artwork Priority", items, count);
@@ -1274,9 +1111,9 @@ static void edit_region_priority(app_settings *settings) {
     }
 
     ap_footer_item footer[] = {
-        {AP_BTN_B, "Cancel", false},
-        {AP_BTN_X, "Reorder", false},
-        {AP_BTN_START, "Save", true},
+        {AP_BTN_B, "CANCEL", false},
+        {AP_BTN_X, "REORDER", false},
+        {AP_BTN_START, "SAVE", true},
     };
 
     ap_list_opts opts = ap_list_default_opts("Region Priority", items, list_count);
@@ -1343,9 +1180,9 @@ static void edit_artwork_options(app_settings *settings) {
         };
 
         ap_footer_item footer[] = {
-            {AP_BTN_B, "Back", false},
-            {AP_BTN_A, "Edit", false},
-            {AP_BTN_START, "Done", true},
+            {AP_BTN_B, "BACK", false},
+            {AP_BTN_A, "EDIT", false},
+            {AP_BTN_START, "DONE", true},
         };
 
         ap_options_list_opts opts = {
@@ -1439,8 +1276,8 @@ static void clear_cheat_cache(void) {
     }
 
     ap_footer_item footer[] = {
-        {AP_BTN_B, "Cancel", false},
-        {AP_BTN_A, "Clear", true},
+        {AP_BTN_B, "CANCEL", false},
+        {AP_BTN_A, "CLEAR", true},
     };
     ap_message_opts msg_opts = {
         .message = "Clear the downloaded cheat database?\n\nThis deletes the local git checkout.\nIt will be re-downloaded on next use.",
@@ -1499,9 +1336,9 @@ static void show_settings_screen(void) {
         };
 
         ap_footer_item footer[] = {
-            {AP_BTN_B, "Back", false},
-            {AP_BTN_A, "Edit", false},
-            {AP_BTN_START, "Save", true},
+            {AP_BTN_B, "BACK", false},
+            {AP_BTN_A, "EDIT", false},
+            {AP_BTN_START, "SAVE", true},
         };
 
         ap_options_list_opts opts = {
@@ -1574,8 +1411,8 @@ void run_app(void) {
                     "Exiting will cancel all remaining downloads.",
                     stats.pending);
                 ap_footer_item footer[] = {
-                    {AP_BTN_B, "Cancel", false},
-                    {AP_BTN_A, "Exit", true},
+                    {AP_BTN_B, "CANCEL", false},
+                    {AP_BTN_A, "EXIT", true},
                 };
                 ap_message_opts opts = {
                     .message = msg,
