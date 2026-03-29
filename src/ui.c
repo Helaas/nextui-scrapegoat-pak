@@ -70,6 +70,94 @@ static void show_brief(const char *message) {
     ap_confirmation(&opts, &result);
 }
 
+typedef struct {
+    ap_detail_info_pair *pairs;
+    char               **keys;
+    char               **values;
+    int                  count;
+    char                 title[64];
+} cheat_detail_section_data;
+
+static void free_cheat_detail_section_data(cheat_detail_section_data *data) {
+    if (!data)
+        return;
+
+    if (data->keys) {
+        for (int i = 0; i < data->count; i++)
+            free(data->keys[i]);
+    }
+    free(data->keys);
+
+    if (data->values) {
+        for (int i = 0; i < data->count; i++)
+            free(data->values[i]);
+    }
+    free(data->values);
+
+    free(data->pairs);
+    memset(data, 0, sizeof(*data));
+}
+
+/* Render cheats as numbered rows instead of one large wrapped paragraph.
+   This keeps long cheat lists responsive in the detail widget. */
+static bool load_cheat_detail_section(const char *cht_path,
+                                      cheat_detail_section_data *out) {
+    cheat_desc_list descs;
+
+    if (!cht_path || !out)
+        return false;
+
+    memset(out, 0, sizeof(*out));
+    if (parse_cheat_descriptions(cht_path, &descs) != 0 || descs.count <= 0)
+        return false;
+
+    out->count = descs.count;
+    out->pairs = calloc((size_t)out->count, sizeof(*out->pairs));
+    out->keys = calloc((size_t)out->count, sizeof(*out->keys));
+    out->values = descs.descriptions; /* take ownership */
+
+    if (!out->pairs || !out->keys || !out->values) {
+        if (out->values) {
+            for (int i = 0; i < out->count; i++)
+                free(out->values[i]);
+        }
+        free(out->values);
+        free(out->keys);
+        free(out->pairs);
+        memset(out, 0, sizeof(*out));
+        return false;
+    }
+
+    for (int i = 0; i < out->count; i++) {
+        char key_label[16];
+
+        snprintf(key_label, sizeof(key_label), "%d.", i + 1);
+        out->keys[i] = strdup(key_label);
+        if (!out->keys[i]) {
+            free_cheat_detail_section_data(out);
+            return false;
+        }
+
+        if (!out->values[i] || !out->values[i][0]) {
+            char fallback[32];
+
+            free(out->values[i]);
+            snprintf(fallback, sizeof(fallback), "Cheat %d", i + 1);
+            out->values[i] = strdup(fallback);
+            if (!out->values[i]) {
+                free_cheat_detail_section_data(out);
+                return false;
+            }
+        }
+
+        out->pairs[i].key = out->keys[i];
+        out->pairs[i].value = out->values[i];
+    }
+
+    snprintf(out->title, sizeof(out->title), "Cheats (%d)", out->count);
+    return true;
+}
+
 /* Returns true if user chose "Track Progress". */
 static bool show_track_progress_prompt(const char *message) {
     ap_footer_item footer[] = {
@@ -320,11 +408,11 @@ static bool show_rom_list_screen(const console_dir *console,
         ap_footer_item footer[4];
         if (ap_get_screen_width() >= 1024) {
             footer[0] = (ap_footer_item){AP_BTN_B, "BACK",        false};
-            footer[1] = (ap_footer_item){AP_BTN_X, "FILTER",      false};
-            footer[2] = (ap_footer_item){AP_BTN_Y, "QUEUE ALL", false};
+            footer[1] = (ap_footer_item){AP_BTN_Y, "FILTER",      false};
+            footer[2] = (ap_footer_item){AP_BTN_X, "QUEUE ALL",   false};
         } else {
-            footer[0] = (ap_footer_item){AP_BTN_X, "FILTER",      false};
-            footer[1] = (ap_footer_item){AP_BTN_Y, "QUEUE ALL", false};
+            footer[0] = (ap_footer_item){AP_BTN_Y, "FILTER",      false};
+            footer[1] = (ap_footer_item){AP_BTN_X, "QUEUE ALL",   false};
             footer[2] = (ap_footer_item){AP_BTN_B, "BACK",        false};
         }
         footer[3] = (ap_footer_item){AP_BTN_A, "OPEN", true};
@@ -334,8 +422,8 @@ static bool show_rom_list_screen(const console_dir *console,
         opts.footer                  = footer;
         opts.footer_count            = 4;
         opts.status_bar              = &g_status_bar;
-        opts.secondary_action_button = AP_BTN_Y;
-        opts.tertiary_action_button  = AP_BTN_X;
+        opts.secondary_action_button = AP_BTN_X;
+        opts.tertiary_action_button  = AP_BTN_Y;
         opts.initial_index           = initial_idx;
         opts.visible_start_index     = visible_start;
 
@@ -350,7 +438,7 @@ static bool show_rom_list_screen(const console_dir *console,
 
         if (ret == AP_CANCELLED) break;
 
-        /* X: cycle filter */
+        /* Y: cycle filter */
         if (result.action == AP_ACTION_TERTIARY_TRIGGERED) {
             filter = (rom_filter)((filter + 1) % 3);
             initial_idx   = 0;
@@ -376,7 +464,7 @@ static bool show_rom_list_screen(const console_dir *console,
         }
 
         if (result.action == AP_ACTION_SECONDARY_TRIGGERED) {
-            /* Y: Queue all visible (filtered) ROMs */
+            /* X: Queue all visible (filtered) ROMs */
             queue_set_settings(settings);
 
             /* Count how many visible ROMs are already installed */
@@ -506,8 +594,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
     section_count++;
 
     /* Cheat list section — if cheat mode and installed */
-    char *cheat_text = NULL;
-    char cheat_title[64] = {0};
+    cheat_detail_section_data cheat_detail = {0};
     if (!is_art && is_installed) {
         char cheats_base[PATH_MAX];
         char cht_path[PATH_MAX];
@@ -515,45 +602,14 @@ static bool show_rom_detail_screen(const rom_file *rom,
         snprintf(cht_path, sizeof(cht_path), "%s/%s/%s.cht",
                  cheats_base, console->tag, rom->display);
 
-        cheat_desc_list descs;
-        if (parse_cheat_descriptions(cht_path, &descs) == 0 && descs.count > 0) {
-            size_t total_len = 0;
-            for (int i = 0; i < descs.count; i++) {
-                total_len += 8;
-                if (descs.descriptions[i])
-                    total_len += strlen(descs.descriptions[i]);
-                else
-                    total_len += 12;
-            }
-            cheat_text = malloc(total_len + 1);
-            if (cheat_text) {
-                cheat_text[0] = '\0';
-                char *pos = cheat_text;
-                for (int i = 0; i < descs.count; i++) {
-                    if (pos != cheat_text) *pos++ = '\n';
-                    const char *desc = descs.descriptions[i];
-                    if (desc && desc[0])
-                        pos += sprintf(pos, "%d. %s", i + 1, desc);
-                    else
-                        pos += sprintf(pos, "%d. Cheat %d", i + 1, i + 1);
-                }
-                *pos = '\0';
-            }
-            cheat_desc_list_free(&descs);
-
-            if (cheat_text && cheat_text[0]) {
-                int cheat_count = 0;
-                for (const char *p = cheat_text; *p; p++)
-                    if (*p == '\n') cheat_count++;
-                cheat_count++;
-                snprintf(cheat_title, sizeof(cheat_title), "Cheats (%d)", cheat_count);
-                sections[section_count] = (ap_detail_section){
-                    .type = AP_SECTION_DESCRIPTION,
-                    .title = cheat_title,
-                    .description = cheat_text,
-                };
-                section_count++;
-            }
+        if (load_cheat_detail_section(cht_path, &cheat_detail)) {
+            sections[section_count] = (ap_detail_section){
+                .type = AP_SECTION_INFO,
+                .title = cheat_detail.title,
+                .info_pairs = cheat_detail.pairs,
+                .info_count = cheat_detail.count,
+            };
+            section_count++;
         }
     }
 
@@ -589,7 +645,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
             snprintf(msg, sizeof(msg), "Re-queued \"%s\" for %s.",
                      rom->display, is_art ? "artwork" : "cheats");
             if (show_track_progress_prompt(msg)) {
-                free(cheat_text);
+                free_cheat_detail_section_data(&cheat_detail);
                 return true;
             }
         } else {
@@ -604,7 +660,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
                 snprintf(msg, sizeof(msg), "Queued \"%s\" for %s.",
                          rom->display, is_art ? "artwork" : "cheats");
                 if (show_track_progress_prompt(msg)) {
-                    free(cheat_text);
+                    free_cheat_detail_section_data(&cheat_detail);
                     return true;
                 }
             } else {
@@ -613,7 +669,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
         }
     }
 
-    free(cheat_text);
+    free_cheat_detail_section_data(&cheat_detail);
     return false;
 }
 
@@ -821,9 +877,8 @@ static void show_item_detail(const queue_item *item) {
     section_count++;
 
     /* Error detail */
-    char *cheat_text = NULL;
+    cheat_detail_section_data cheat_detail = {0};
     char art_path[PATH_MAX] = {0};
-    char cheat_title[64] = {0};
 
     if (is_error) {
         const char *msg = item->error_msg[0] ? item->error_msg :
@@ -843,47 +898,14 @@ static void show_item_detail(const queue_item *item) {
         snprintf(cht_path, sizeof(cht_path), "%s/%s/%s.cht",
                  cheats_base, item->system_tag, item->rom_display);
 
-        cheat_desc_list descs;
-        if (parse_cheat_descriptions(cht_path, &descs) == 0 && descs.count > 0) {
-            /* Build a numbered list: "1. Description\n2. Description\n..." */
-            /* Each line: up to 4 digits + ". " + description + "\n" */
-            size_t total_len = 0;
-            for (int i = 0; i < descs.count; i++) {
-                total_len += 8; /* "NNN. " prefix + newline + safety */
-                if (descs.descriptions[i])
-                    total_len += strlen(descs.descriptions[i]);
-                else
-                    total_len += 12; /* "Cheat NNN" fallback */
-            }
-            cheat_text = malloc(total_len + 1);
-            if (cheat_text) {
-                cheat_text[0] = '\0';
-                char *pos = cheat_text;
-                for (int i = 0; i < descs.count; i++) {
-                    if (pos != cheat_text) *pos++ = '\n';
-                    const char *desc = descs.descriptions[i];
-                    if (desc && desc[0])
-                        pos += sprintf(pos, "%d. %s", i + 1, desc);
-                    else
-                        pos += sprintf(pos, "%d. Cheat %d", i + 1, i + 1);
-                }
-                *pos = '\0';
-            }
-            cheat_desc_list_free(&descs);
-
-            if (cheat_text && cheat_text[0]) {
-                int cheat_count = 0;
-                for (const char *p = cheat_text; *p; p++)
-                    if (*p == '\n') cheat_count++;
-                cheat_count++; /* last line has no newline */
-                snprintf(cheat_title, sizeof(cheat_title), "Cheats (%d)", cheat_count);
-                sections[section_count] = (ap_detail_section){
-                    .type = AP_SECTION_DESCRIPTION,
-                    .title = cheat_title,
-                    .description = cheat_text,
-                };
-                section_count++;
-            }
+        if (load_cheat_detail_section(cht_path, &cheat_detail)) {
+            sections[section_count] = (ap_detail_section){
+                .type = AP_SECTION_INFO,
+                .title = cheat_detail.title,
+                .info_pairs = cheat_detail.pairs,
+                .info_count = cheat_detail.count,
+            };
+            section_count++;
         }
     } else {
         /* Artwork: show the image */
@@ -918,7 +940,7 @@ static void show_item_detail(const queue_item *item) {
     ap_detail_result result;
     ap_detail_screen(&opts, &result);
 
-    free(cheat_text);
+    free_cheat_detail_section_data(&cheat_detail);
 }
 
 /* ── Progress screen (ap_queue_viewer) ────────────────────── */
