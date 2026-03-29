@@ -70,11 +70,11 @@ static void show_brief(const char *message) {
     ap_confirmation(&opts, &result);
 }
 
-/* Returns true if user chose "Go to Downloads". */
-static bool show_queued_brief(const char *message) {
+/* Returns true if user chose "Track Progress". */
+static bool show_track_progress_prompt(const char *message) {
     ap_footer_item footer[] = {
         {AP_BTN_B, "BACK",            false},
-        {AP_BTN_A, "GO TO DOWNLOADS", true},
+        {AP_BTN_A, "TRACK PROGRESS", true},
     };
     ap_message_opts opts = {
         .message      = message,
@@ -161,14 +161,14 @@ static main_action show_main_menu(void) {
         int processed = qstats.done + qstats.failed;
         if (qstats.failed > 0)
             snprintf(progress_label, sizeof(progress_label),
-                     "Queued Downloads  (%d/%d, %d failed)",
+                     "Track Progress  (%d/%d, %d failed)",
                      processed, qstats.total, qstats.failed);
         else
             snprintf(progress_label, sizeof(progress_label),
-                     "Queued Downloads  (%d/%d)",
+                     "Track Progress  (%d/%d)",
                      processed, qstats.total);
     } else
-        snprintf(progress_label, sizeof(progress_label), "Queued Downloads");
+        snprintf(progress_label, sizeof(progress_label), "Track Progress");
 
     ap_list_item items[] = {
         {.label = "Artwork"},
@@ -321,10 +321,10 @@ static bool show_rom_list_screen(const console_dir *console,
         if (ap_get_screen_width() >= 1024) {
             footer[0] = (ap_footer_item){AP_BTN_B, "BACK",        false};
             footer[1] = (ap_footer_item){AP_BTN_X, "FILTER",      false};
-            footer[2] = (ap_footer_item){AP_BTN_Y, "ADD QUEUE", false};
+            footer[2] = (ap_footer_item){AP_BTN_Y, "QUEUE ALL", false};
         } else {
             footer[0] = (ap_footer_item){AP_BTN_X, "FILTER",      false};
-            footer[1] = (ap_footer_item){AP_BTN_Y, "ADD QUEUE", false};
+            footer[1] = (ap_footer_item){AP_BTN_Y, "QUEUE ALL", false};
             footer[2] = (ap_footer_item){AP_BTN_B, "BACK",        false};
         }
         footer[3] = (ap_footer_item){AP_BTN_A, "OPEN", true};
@@ -432,7 +432,7 @@ static bool show_rom_list_screen(const console_dir *console,
             char msg[128];
             snprintf(msg, sizeof(msg), "Queued %d ROMs for %s.", added,
                      mode == LIB_MODE_ART ? "artwork" : "cheats");
-            if (show_queued_brief(msg)) {
+            if (show_track_progress_prompt(msg)) {
                 free(filter_map);
                 free(roms);
                 return true;
@@ -588,7 +588,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
             char msg[256];
             snprintf(msg, sizeof(msg), "Re-queued \"%s\" for %s.",
                      rom->display, is_art ? "artwork" : "cheats");
-            if (show_queued_brief(msg)) {
+            if (show_track_progress_prompt(msg)) {
                 free(cheat_text);
                 return true;
             }
@@ -603,7 +603,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
                 char msg[256];
                 snprintf(msg, sizeof(msg), "Queued \"%s\" for %s.",
                          rom->display, is_art ? "artwork" : "cheats");
-                if (show_queued_brief(msg)) {
+                if (show_track_progress_prompt(msg)) {
                     free(cheat_text);
                     return true;
                 }
@@ -1012,14 +1012,15 @@ static void progress_on_clear(void *userdata) {
 
 static void show_progress_screen(void) {
     ap_queue_opts opts = {
-        .title     = "Downloads",
-        .snapshot  = progress_snapshot,
-        .max_items = QUEUE_MAX_ITEMS,
-        .status_bar = &g_status_bar,
-        .userdata  = NULL,
-        .on_detail = progress_on_detail,
-        .on_cancel = progress_on_cancel,
-        .on_clear  = progress_on_clear,
+        .title         = "Progress",
+        .snapshot      = progress_snapshot,
+        .max_items     = QUEUE_MAX_ITEMS,
+        .status_bar    = &g_status_bar,
+        .userdata      = NULL,
+        .on_detail     = progress_on_detail,
+        .on_cancel     = progress_on_cancel,
+        .on_clear      = progress_on_clear,
+        .filter_labels = { "ALL", "ACTIVE", "DONE", "FAILED" },
     };
     ap_queue_viewer(&opts);
 }
@@ -1509,8 +1510,8 @@ void run_app(void) {
             if (stats.pending > 0) {
                 char msg[256];
                 snprintf(msg, sizeof(msg),
-                    "%d items still in the download queue.\n\n"
-                    "Exiting will cancel all remaining downloads.",
+                    "%d items still in the queue.\n\n"
+                    "Exiting will cancel all remaining items.",
                     stats.pending);
                 ap_footer_item footer[] = {
                     {AP_BTN_B, "CANCEL", false},
