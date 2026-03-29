@@ -1020,7 +1020,7 @@ static void show_progress_screen(void) {
         .on_detail     = progress_on_detail,
         .on_cancel     = progress_on_cancel,
         .on_clear      = progress_on_clear,
-        .filter_labels = { "ALL", "ACTIVE", "DONE", "FAILED" },
+        .filter_labels = { "ALL", "BUSY", "DONE", "FAIL" },
     };
     ap_queue_viewer(&opts);
 }
