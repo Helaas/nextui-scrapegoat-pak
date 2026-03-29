@@ -473,6 +473,90 @@ static void normalize_cheat_name(const char *name, char *out, size_t out_len) {
     out[j] = '\0';
 }
 
+static int count_normalized_tokens(const char *normalized) {
+    int count = 0;
+    bool in_token = false;
+
+    for (const char *p = normalized; *p; p++) {
+        if (isspace((unsigned char)*p)) {
+            in_token = false;
+            continue;
+        }
+        if (!in_token) {
+            count++;
+            in_token = true;
+        }
+    }
+
+    return count;
+}
+
+static bool normalized_key_exists(char (*keys)[256], int key_count,
+                                  const char *normalized) {
+    for (int i = 0; i < key_count; i++) {
+        if (strcmp(keys[i], normalized) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* Treat "Title A _ Title B" as alternate titles only when every part
+   still looks like a standalone game title after normalization. */
+static int collect_cheat_alias_keys(const char *game_name,
+                                    const char *full_normalized,
+                                    char (**out_keys)[256]) {
+    char stripped[512];
+    int part_cap = 1;
+    int key_count = 0;
+    char (*keys)[256];
+    const char *part;
+
+    *out_keys = NULL;
+    strip_parentheticals(game_name, stripped, sizeof(stripped));
+
+    for (const char *sep = stripped; (sep = strstr(sep, " _ ")) != NULL; sep += 3)
+        part_cap++;
+    if (part_cap < 2)
+        return 0;
+
+    keys = calloc((size_t)part_cap, sizeof(*keys));
+    if (!keys)
+        return 0;
+
+    part = stripped;
+    for (;;) {
+        const char *sep = strstr(part, " _ ");
+        size_t len = sep ? (size_t)(sep - part) : strlen(part);
+        char alias[256];
+        char normalized[256];
+
+        snprintf(alias, sizeof(alias), "%.*s", (int)len, part);
+        normalize_cheat_name(alias, normalized, sizeof(normalized));
+
+        if (normalized[0] == '\0' ||
+            strcmp(normalized, full_normalized) == 0 ||
+            count_normalized_tokens(normalized) < 2) {
+            free(keys);
+            return 0;
+        }
+
+        if (!normalized_key_exists(keys, key_count, normalized))
+            snprintf(keys[key_count++], sizeof(keys[0]), "%s", normalized);
+
+        if (!sep)
+            break;
+        part = sep + 3;
+    }
+
+    if (key_count < 2) {
+        free(keys);
+        return 0;
+    }
+
+    *out_keys = keys;
+    return key_count;
+}
+
 /* ── Region matching ──────────────────────────────────────── */
 
 typedef struct {
@@ -693,6 +777,12 @@ int build_cheat_list(const char *libretro_dir_name, cheat_list *list) {
         const char *regions[16];
         int region_count = extract_cheat_regions(game_name, regions, 16);
         cheat_list_add_internal(list, normalized, full_path, regions, region_count);
+
+        char (*alias_keys)[256] = NULL;
+        int alias_count = collect_cheat_alias_keys(game_name, normalized, &alias_keys);
+        for (int i = 0; i < alias_count; i++)
+            cheat_list_add_internal(list, alias_keys[i], full_path, regions, region_count);
+        free(alias_keys);
     }
 
     closedir(dir);

@@ -69,7 +69,7 @@ Supported systems for artwork (46 total):
 2. **Watch the download progress** — Shows current ROM being matched
 3. **Review summary** — See Total / Downloaded / Not Found / Errors
 
-The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name. When multiple cheat files exist for the same game (e.g. different regions), ScrapeGoat picks the one that best matches your ROM's region and your configured region priority. See [How Matching Works](#how-matching-works) for details.
+The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name. It also understands some multi-title cheat filenames such as `Title A _ Title B`, so alternate regional titles can still resolve to the same cheat file. When multiple cheat files exist for the same game (e.g. different regions), ScrapeGoat picks the one that best matches your ROM's region and your configured region priority. See [How Matching Works](#how-matching-works) for details.
 
 Supported systems for cheats (33 total, based on current Libretro `cht/` directories):
 Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA), SNES/SFC, Super Famicom (Supafaust), Super Game Boy, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, Sega 32X, Sega Saturn, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600, Atari 5200, Atari 7800, Lynx, ColecoVision, MSX, Nintendo 64, Nintendo DS, PlayStation Portable, Dreamcast, Atari Jaguar, PC Engine SuperGrafx, Intellivision, Atari 800, TIC-80
@@ -177,6 +177,10 @@ Cheat matching uses **normalized name comparison** between your ROM filenames an
    - Removing all punctuation
    - Collapsing whitespace
 2. If the normalized names match exactly, the cheat file is a candidate.
+3. Some Libretro cheat filenames contain **alternate titles** separated by a literal ` _ `, for example `Bare Knuckle II - Shitou e no Requiem _ Streets of Rage II (Japan, Europe).cht`. In those cases, ScrapeGoat also indexes each side as an alias when every segment still looks like a standalone multi-word game title after normalization.
+4. This alias handling is intentionally conservative. It does **not** treat every ` _ ` as an alternate-title separator, so joiner-style titles such as `Dungeons _ Dragons`, `Game _ Watch`, or `Mario _ Luigi` do not create bogus alias-only matches.
+
+ScrapeGoat still uses **exact normalized matching** after that indexing step. It does not use fuzzy matching or generic substring matching.
 
 **Region-aware selection:** The Libretro cheat database often contains multiple cheat files for the same game with different region tags (e.g. `Castlevania (USA) (Code Breaker).cht` and `Castlevania (Europe) (Code Breaker).cht`). When multiple candidates match the same ROM, ScrapeGoat picks the best one using this priority:
 
@@ -188,6 +192,8 @@ Cheat matching uses **normalized name comparison** between your ROM filenames an
 Region keywords are recognized from parenthetical groups in filenames: `USA`, `Europe`, `Japan`, `World`, `France`, `Germany`, `Spain`, `Italy`, `Portugal`, `Australia`, `Korea`, `China`, `Taiwan`, and their common abbreviations (`US`, `EU`, `JP`, `FR`, `DE`, etc.). Non-region tags like `(Code Breaker)`, `(SGB Enhanced)`, and `(Rev 1)` are ignored.
 
 For example, if you have `Pokemon - Emerald Version (USA, Europe).gba` and the Libretro database has both `Pokemon - Emerald Version (USA, Europe) (Code Breaker).cht` and `Pokemon - Feuerrote Edition (G).cht`, only the first matches (both normalize to `pokemon emerald version`). If there were a `(Japan)` variant too, the `(USA, Europe)` one would be selected because it directly overlaps with the ROM's regions.
+
+Another example: `Streets of Rage II (Japen, Europe) (En,Ja)` can match `Bare Knuckle II - Shitou e no Requiem _ Streets of Rage II (Japan, Europe).cht` because `Streets of Rage II` is indexed as an alternate title from that cheat filename.
 
 Existing cheat files on your device are never overwritten — if a `.cht` already exists for a ROM, it is skipped.
 
