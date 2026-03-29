@@ -13,6 +13,7 @@ DIST_DIR := $(BUILD_DIR)/release
 STAGING_DIR := $(BUILD_DIR)/staging
 CACHE_DIR := .cache
 GIT_STATIC_CACHE := $(CACHE_DIR)/git-static
+NEXTUI_PREVIEW_CACHE := $(CACHE_DIR)/nextui-preview
 
 GIT_VERSION      := 2.53.0
 CURL_VERSION     := 8.11.1
@@ -49,7 +50,8 @@ endif
 .PHONY: all native mac run-mac run-native tg5040 tg5050 my355 \
 	package package-tg5040 package-tg5050 package-my355 do-package \
 	deploy deploy-platform clean clean-all help check-credentials \
-	build-git-static clean-git-static update-apostrophe
+	build-git-static clean-git-static update-apostrophe \
+	setup-nextui-preview-cache clean-nextui-preview-cache
 
 # ── Default target ──────────────────────────────────────────
 
@@ -85,7 +87,9 @@ check-credentials:
 
 # ── Native macOS build ──────────────────────────────────────
 
-mac: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
+mac: $(APOSTROPHE_DIR)/include/apostrophe.h
+	@$(MAKE) setup-nextui-preview-cache
+	@$(MAKE) check-credentials
 	@mkdir -p $(BUILD_DIR)/mac
 	cc -std=gnu11 -O0 -g \
 		-DPLATFORM_MAC \
@@ -99,6 +103,13 @@ mac: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 
 run-mac: mac
 	./$(BUILD_DIR)/mac/$(APP_NAME)
+
+setup-nextui-preview-cache: $(APOSTROPHE_DIR)/include/apostrophe.h
+	@$(MAKE) -C $(APOSTROPHE_DIR) setup-nextui-preview-cache \
+		CACHE_DIR=$(CURDIR)/$(CACHE_DIR)
+
+clean-nextui-preview-cache:
+	rm -rf $(NEXTUI_PREVIEW_CACHE)
 
 # ── Docker cross-compilation ────────────────────────────────
 
@@ -258,6 +269,8 @@ help:
 	@echo "  tg5050        Build for TG5050 (Docker cross-compile)"
 	@echo "  my355         Build for Miyoo Flip (Docker cross-compile)"
 	@echo "  update-apostrophe  Pin Apostrophe submodule to origin/main"
+	@echo "  setup-nextui-preview-cache  Fetch pinned NextUI preview sprites into .cache"
+	@echo "  clean-nextui-preview-cache  Remove the cached desktop preview assets"
 	@echo "  package       Package all platforms (.pak.zip + .pakz)"
 	@echo "  deploy        Detect adb platform, package, and push"
 	@echo "  build-git-static  Build static git binary (cached)"

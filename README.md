@@ -329,6 +329,24 @@ make package
 make help
 ```
 
+`make mac` and `make run-mac` automatically run `setup-nextui-preview-cache` first. The cache
+is stored under `.cache/nextui-preview/` and contains a sparse checkout of only:
+
+- `skeleton/SYSTEM/res/assets@1x.png`
+- `skeleton/SYSTEM/res/assets@2x.png`
+- `skeleton/SYSTEM/res/assets@3x.png`
+- `skeleton/SYSTEM/res/assets@4x.png`
+
+The sparse checkout is pinned to `https://github.com/LoveRetro/NextUI.git` commit
+`7d201cf293f3a253e09749b8bb002e0b9f66d652` (resolved from `main` on March 29, 2026). ScrapeGoat
+also generates local `nextval.json` and `minuisettings.txt` preview fixtures in the same cache.
+
+Licensing note: ScrapeGoat does not redistribute these GPL assets in this MIT-licensed repo or
+its release artifacts. The build helper only fetches them locally on the developer's machine.
+GNU's FAQ treats installer/setup tooling as a separate work and requires corresponding source
+when redistributing GPL-covered object code: [installer](https://www.gnu.org/licenses/gpl-faq.en.html#GPLCompatInstaller),
+[source access](https://www.gnu.org/licenses/gpl-faq.en.html#AnonFTPAndSendSources).
+
 ### Output
 
 | Target | Output |

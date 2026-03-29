@@ -41,6 +41,12 @@ static bool show_rom_detail_screen(const rom_file *rom,
                                     library_mode mode,
                                     const app_settings *settings);
 
+static ap_status_bar_opts g_status_bar = {
+    .show_clock = AP_CLOCK_AUTO,
+    .show_battery = true,
+    .show_wifi = true,
+};
+
 /* ── Helpers ──────────────────────────────────────────────── */
 
 static void show_error(const char *message) {
@@ -179,6 +185,7 @@ static main_action show_main_menu(void) {
     ap_list_opts opts = ap_list_default_opts("ScrapeGoat", items, 5);
     opts.footer = footer;
     opts.footer_count = 2;
+    opts.status_bar = &g_status_bar;
 
     ap_list_result result;
     int ret = ap_list(&opts, &result);
@@ -326,6 +333,7 @@ static bool show_rom_list_screen(const console_dir *console,
                                                   visible_count > 0 ? visible_count : 0);
         opts.footer                  = footer;
         opts.footer_count            = 4;
+        opts.status_bar              = &g_status_bar;
         opts.secondary_action_button = AP_BTN_Y;
         opts.tertiary_action_button  = AP_BTN_X;
         opts.initial_index           = initial_idx;
@@ -397,6 +405,7 @@ static bool show_rom_list_screen(const console_dir *console,
                 ap_list_opts copts = ap_list_default_opts(choice_title, choices, 2);
                 copts.footer       = cf;
                 copts.footer_count = 2;
+                copts.status_bar   = &g_status_bar;
                 ap_list_result cres;
                 int cret = ap_list(&copts, &cres);
                 if (cret == AP_CANCELLED || cres.selected_index < 0)
@@ -563,6 +572,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
         .section_count = section_count,
         .footer        = footer,
         .footer_count  = footer_count,
+        .status_bar    = &g_status_bar,
     };
 
     ap_detail_result result;
@@ -680,6 +690,7 @@ static bool show_library_screen(library_mode mode) {
         ap_list_opts opts = ap_list_default_opts(title, items, visible_count);
         opts.footer = footer;
         opts.footer_count = 2;
+        opts.status_bar = &g_status_bar;
         opts.initial_index = initial_idx;
         opts.visible_start_index = visible_start;
 
@@ -756,6 +767,7 @@ static void show_api_usage_screen(void) {
         .section_count = 1,
         .footer        = footer,
         .footer_count  = 1,
+        .status_bar    = &g_status_bar,
     };
     ap_detail_result result;
     ap_detail_screen(&opts, &result);
@@ -900,6 +912,7 @@ static void show_item_detail(const queue_item *item) {
         .section_count = section_count,
         .footer = footer,
         .footer_count = 1,
+        .status_bar = &g_status_bar,
     };
 
     ap_detail_result result;
@@ -1002,6 +1015,7 @@ static void show_progress_screen(void) {
         .title     = "Downloads",
         .snapshot  = progress_snapshot,
         .max_items = QUEUE_MAX_ITEMS,
+        .status_bar = &g_status_bar,
         .userdata  = NULL,
         .on_detail = progress_on_detail,
         .on_cancel = progress_on_cancel,
@@ -1055,6 +1069,7 @@ static void edit_artwork_priority(app_settings *settings) {
     opts.action_button = AP_BTN_START;
     opts.footer = footer;
     opts.footer_count = 3;
+    opts.status_bar = &g_status_bar;
 
     ap_list_result result;
     int ret = ap_list(&opts, &result);
@@ -1110,6 +1125,7 @@ static void edit_region_priority(app_settings *settings) {
     opts.action_button = AP_BTN_START;
     opts.footer = footer;
     opts.footer_count = 3;
+    opts.status_bar = &g_status_bar;
 
     ap_list_result result;
     int ret = ap_list(&opts, &result);
@@ -1181,6 +1197,7 @@ static void edit_artwork_options(app_settings *settings) {
             .footer = footer,
             .footer_count = 3,
             .confirm_button = AP_BTN_START,
+            .status_bar = &g_status_bar,
         };
 
         ap_options_list_result result;
@@ -1432,6 +1449,7 @@ static void show_settings_screen(void) {
             .footer = footer,
             .footer_count = 3,
             .confirm_button = AP_BTN_START,
+            .status_bar = &g_status_bar,
         };
 
         ap_options_list_result result;
