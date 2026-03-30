@@ -414,14 +414,28 @@ int update_cheat_repo(atomic_int *interrupt_signal,
         set_message("Updating cheat database...");
 
     const char *git = get_git_bin();
-    const char *argv[] = {
+
+    /* Fetch with blob filter so only tree/commit objects are transferred,
+       matching the --filter=blob:none used at clone time. */
+    const char *fetch_argv[] = {
         git, "-C", repo,
-        "pull", "--ff-only", "--progress",
+        "fetch", "--filter=blob:none", "--depth=1", "--progress",
         NULL,
     };
+    int ret = run_repo_git_streaming(fetch_argv, NULL, interrupt_signal,
+                                     set_progress, progress_scale * 0.9f,
+                                     progress_offset);
+    if (ret != CHEAT_OP_OK)
+        return ret;
 
-    return run_repo_git_streaming(argv, NULL, interrupt_signal,
-                                  set_progress, progress_scale, progress_offset);
+    const char *merge_argv[] = {
+        git, "-C", repo,
+        "merge", "--ff-only", "FETCH_HEAD",
+        NULL,
+    };
+    return run_repo_git_streaming(merge_argv, NULL, interrupt_signal,
+                                  set_progress, progress_scale * 0.1f,
+                                  progress_offset + progress_scale * 0.9f);
 }
 
 /* ── Cheat name normalization and matching ────────────────── */

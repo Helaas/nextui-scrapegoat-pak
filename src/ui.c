@@ -42,8 +42,8 @@ static bool show_rom_detail_screen(const rom_file *rom,
                                     const app_settings *settings);
 
 static ap_status_bar_opts g_status_bar = {
-    .show_clock = AP_CLOCK_AUTO,
-    .show_battery = true,
+    .show_clock = AP_CLOCK_HIDE,
+    .show_battery = false,
     .show_wifi = true,
 };
 
@@ -572,8 +572,8 @@ static bool show_rom_detail_screen(const rom_file *rom,
             .type = AP_SECTION_IMAGE,
             .title = NULL,
             .image_path = art_path,
-            .image_w = ap_scale(200),
-            .image_h = ap_scale(200),
+            .image_w = ap_scale(320),
+            .image_h = ap_scale(320),
         };
         section_count++;
     }
@@ -921,8 +921,8 @@ static void show_item_detail(const queue_item *item) {
             .type = AP_SECTION_IMAGE,
             .title = NULL,
             .image_path = art_path,
-            .image_w = ap_scale(200),
-            .image_h = ap_scale(200),
+            .image_w = ap_scale(320),
+            .image_h = ap_scale(320),
         };
         section_count++;
     }
