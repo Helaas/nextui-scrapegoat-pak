@@ -9,7 +9,7 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 | `tg5040` (TG5040) | TrimUI Smart Pro | 1280×720 | Docker (ARM64) |
 | `tg5040` (TG3040) | TrimUI Brick | 1024×768 | Docker (ARM64) |
 | `tg5050` | TrimUI Smart Pro S | 1280×720 | Docker (ARM64) |
-| `my355` | Miyoo Flip | Device-dependent | Docker (ARM64) |
+| `my355` | Miyoo Flip | 640x480 | Docker (ARM64) |
 
 > The Brick and Smart Pro share the same `tg5040` filesystem layout (tools, roms, settings paths are identical). The pak auto-detects the Brick via the `DEVICE` environment variable (`"brick"` vs `"smartpro"`), which NextUI's `launch.sh` exports at startup.
 
