@@ -1,193 +1,128 @@
 # ScrapeGoat PAK — Setup Guide
 
-## Credentials & Environment Variables
+## Credentials
 
-This application requires credentials to authenticate with the ScreenScraper API. Credentials are **not stored in git** for security reasons. 
+ScrapeGoat requires ScreenScraper.fr **developer credentials** to function. These are embedded into the binary at build time via the Makefile (not loaded at runtime).
 
-### Required Credentials
+### Required: Developer Credentials
 
-**ScreenScraper.fr Developer Credentials**
-- `SCREENSCRAPER_DEV_ID`: Developer ID from screenscraper.fr
-- `SCREENSCRAPER_DEV_PASSWORD`: Developer password from screenscraper.fr
+| Variable | Description |
+|----------|-------------|
+| `SCREENSCRAPER_DEV_ID` | Developer ID from screenscraper.fr |
+| `SCREENSCRAPER_DEV_PASSWORD` | Developer password from screenscraper.fr |
 
-Without these, API requests will have severe rate limits (~1 request per min).
+Without these, the build will fail (`make check-credentials` runs automatically). With developer credentials only, scraping works at a limited rate (~1 request/min, single-threaded).
 
-**Optional User Credentials** (used for higher rate limits)
-- Username and password are configured via the application's Settings screen
-- Stored locally in `~/.userdata/shared/ScrapeGoat/settings.json`
-- This file is never committed to git (ignored in `.gitignore`)
+### Optional: User Credentials
+
+End users can configure their personal ScreenScraper.fr username and password via the in-app **Settings** screen. This unlocks higher rate limits (100+ requests/min, multi-threaded), depending on the user's API tier. User credentials are stored locally on the device at `~/.userdata/shared/ScrapeGoat/settings.json` and are never committed to git.
+
+### Optional: Debug Credentials
+
+| Variable | Description |
+|----------|-------------|
+| `SCREENSCRAPER_DEBUG_PASSWORD` | Debug password from screenscraper.fr (limited to 100 uses/day) |
+| `SCREENSCRAPER_FORCE_LEVEL` | Override user level for thread count testing (e.g. `30`, `50`) |
+| `SCREENSCRAPER_FORCE_UPDATE` | Set to `1` to force API cache refresh during testing |
 
 ## Local Development Setup
 
-### 1. Copy the Example Environment File
+### 1. Prerequisites
+
+**macOS:**
+```bash
+brew install sdl2 sdl2_ttf sdl2_image libcurl pkg-config
+```
+
+**Embedded device builds** (tg5040/tg5050/my355):
+- Docker with ARM64 support
+- GNU Make
+
+### 2. Set Up Developer Credentials
 
 ```bash
 cp .env.example .env.local
 ```
 
-### 2. Obtain Developer Credentials
-
-1. Visit [screenscraper.fr](https://www.screenscraper.fr/)
-2. Create an account
-3. Go to [webapi2.php](https://www.screenscraper.fr/webapi2.php)
-4. Request developer API access
-5. You'll receive an email with:
-   - Developer ID
-   - Developer Password
-
-### 3. Update `.env.local` with Real Credentials
-
-Edit `.env.local` and replace the placeholders:
+Edit `.env.local` and replace the placeholders with real credentials:
 
 ```bash
 SCREENSCRAPER_DEV_ID=your_actual_dev_id
 SCREENSCRAPER_DEV_PASSWORD=your_actual_dev_password
 ```
 
-**Important**: `.env.local` is in `.gitignore` and will never be committed.
+**How this works:** The Makefile includes `.env.local` directly (`-include .env.local`) and passes the values as C preprocessor defines (`-DSCREENSCRAPER_DEV_ID=\"...\"`) at compile time. No runtime environment variables are needed.
 
-### 4. Load Credentials into Environment (Two Options)
+### 3. Obtain Developer Credentials
 
-**Option A: Use `.env` file (Recommended for Local Dev)**
+1. Visit [screenscraper.fr](https://www.screenscraper.fr/) and create an account
+2. Go to the forums and request developer API access
+3. Your account will be approved and you'll receive your `dev_id` and `dev_password` via the developer dashboard
+4. Add them to `.env.local`
 
-For local development, the simplest approach is to set environment variables before running:
-
-```bash
-export SCREENSCRAPER_DEV_ID=$(grep SCREENSCRAPER_DEV_ID .env.local | cut -d '=' -f2)
-export SCREENSCRAPER_DEV_PASSWORD=$(grep SCREENSCRAPER_DEV_PASSWORD .env.local | cut -d '=' -f2)
-./build/scrapegoat
-```
-
-Or use a bash function in your shell profile:
+### 4. Build and Run
 
 ```bash
-alias scrapegoat-dev='export $(cat .env.local | xargs) && ./build/scrapegoat'
+make run-mac        # Build + run macOS development binary
 ```
 
-**Option B: Use System Environment Variables**
+If credentials are missing or still contain placeholders, the build will fail with:
 
-Set environment variables in your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
+```
+ERROR: SCREENSCRAPER_DEV_ID and SCREENSCRAPER_DEV_PASSWORD must be set in .env.local
+```
+
+See the [README](README.md#building) for all build targets (`make tg5040`, `make package`, `make deploy`, etc.).
+
+## Deployment
+
+### Embedded Devices (TG5040/TG5050/MY355)
+
+Credentials are baked into the binary at build time. The deployed `.pak` contains no `.env` files or plaintext secrets — only the compiled binary with embedded credentials.
 
 ```bash
-export SCREENSCRAPER_DEV_ID="your_dev_id"
-export SCREENSCRAPER_DEV_PASSWORD="your_dev_password"
+# Build, package, and deploy via ADB (auto-detects device platform)
+make deploy
+
+# Or package for manual SD card installation
+make package
 ```
 
-Then run the application normally:
-```bash
-./build/scrapegoat
-```
-
-### 5. Verify Setup
-
-When you start the application, you should see in the logs:
-- No warning about missing credentials, OR
-- Only warnings about missing user credentials (which are optional)
-
-If you see:
-```
-WARNING: SCREENSCRAPER_DEV_ID and/or SCREENSCRAPER_DEV_PASSWORD not set.
-```
-
-Then credentials aren't loaded yet. Check that:
-1. `.env.local` contains real (non-placeholder) values
-2. Environment variables are set before running the app
-3. Variable names match exactly (case-sensitive)
-
-## Deployment Setup
-
-### On Embedded Devices (TG5040/TG5050)
-
-For production deployment on NextUI hardware:
-
-1. **Set environment variables** in your deployment script or system configuration
-2. **Never include `.env` files** in the deployed package
-3. **Never include `.env.local` files** in the repository
-
-Example deployment script:
-
-```bash
-#!/bin/bash
-# deployment.sh - Only for maintainers with real credentials
-
-export SCREENSCRAPER_DEV_ID="<real_credential>"
-export SCREENSCRAPER_DEV_PASSWORD="<real_credential>"
-
-# Build the application
-make clean build
-
-# Package for deployment
-# (your packaging commands here)
-```
-
-### Via CI/CD (GitHub Actions, etc.)
-
-Store credentials as repository secrets:
-
-1. Go to Settings → Secrets and variables → Actions
-2. Add secrets:
-   - `SCREENSCRAPER_DEV_ID`
-   - `SCREENSCRAPER_DEV_PASSWORD`
-
-3. Use in workflow:
-
-```yaml
-- name: Build with credentials
-  env:
-    SCREENSCRAPER_DEV_ID: ${{ secrets.SCREENSCRAPER_DEV_ID }}
-    SCREENSCRAPER_DEV_PASSWORD: ${{ secrets.SCREENSCRAPER_DEV_PASSWORD }}
-  run: make build
-```
 
 ## Security Best Practices
 
-1. **Never commit `.env.local` or real credentials to git**
-   - `.gitignore` protects you, but be extra careful
-
-2. **`.env.example` contains only placeholders**
-   - This is committed and shows developers what variables they need
-   - Always review `.env.example` before updating your `.env.local`
-
-3. **Credentials are case-sensitive**
-   - `SCREENSCRAPER_DEV_ID` ≠ `screenscraper_dev_id`
-
-4. **Log sanitization**
-   - The application automatically strips credentials from logged URLs
-   - Check logs don't contain `sspassword` or `devpassword` values
-
-5. **User credentials storage**
-   - Settings stored at `~/.userdata/shared/ScrapeGoat/settings.json`
-   - Stored as plaintext JSON (consider encryption for production)
-   - This location is NOT tracked by git
+1. **Never commit `.env.local` to git** — `.gitignore` protects you, but be careful
+2. **`.env.example` contains only placeholders** — review it before updating `.env.local`
+3. **Credentials are case-sensitive** — `SCREENSCRAPER_DEV_ID` ≠ `screenscraper_dev_id`
+4. **Log sanitization** — the app strips `sspassword` and `devpassword` values from logged URLs
+5. **User credentials** are stored as plaintext JSON at `~/.userdata/shared/ScrapeGoat/settings.json` on the device (not tracked by git)
 
 ## Troubleshooting
 
-### "Missing required credentials"
-- Check environment variables are set: `echo $SCREENSCRAPER_DEV_ID`
-- Check `.env.local` has real values (not placeholders)
-- Restart the application after setting env vars
+### Build fails with "credentials not found"
+- Ensure `.env.local` exists and contains real values (not placeholders)
+- Run `make check-credentials` to verify
 
-### "API rate limit exceeded" or "Developer not authenticated"
-- Credentials are not being passed correctly to the API
-- Verify credentials are correct in `.env.local`
-- Check the application startup logs for credential loading messages
+### "API rate limit exceeded" or slow scraping
+- Developer-only mode is limited to ~1 request/min
+- Configure your personal ScreenScraper.fr credentials in **Settings** for higher limits
 
-### "Invalid username/password" (for user credentials)
-- These are configured via the Settings screen, not environment variables
-- Run the app and go to Settings → ScreenScraper Credentials
-- Enter your screenscraper.fr user credentials there
+### "Invalid username/password" (user credentials)
+- User credentials are configured via the in-app **Settings** screen, not `.env.local`
+- Go to **Settings** and enter your screenscraper.fr username and password
 
 ## File Overview
 
-| File | Purpose | Committed to Git? |
-|------|---------|---|
-| `.env.example` | Shows required env variables with placeholders | ✅ Yes |
-| `.env.local` | Your actual credentials for local development | ❌ No (in .gitignore) |
-| `.gitignore` | Tells git to ignore credentials files | ✅ Yes |
-| `~/.userdata/shared/ScrapeGoat/settings.json` | User credentials & app settings | ❌ No (local user file) |
+| File | Purpose | In Git? |
+|------|---------|---------|
+| `.env.example` | Shows required variables with placeholders | Yes |
+| `.env.local` | Your actual developer credentials | No (`.gitignore`) |
+| `Makefile` | Reads `.env.local` and embeds credentials via `-D` flags | Yes |
+| `src/screenscraper.c` | Uses embedded credential defines at compile time | Yes |
+| `~/.userdata/shared/ScrapeGoat/settings.json` | User credentials & app settings (on device) | No |
 
 ## See Also
 
-- [.env.example](.env.example) — Environment variable reference
-- [screenscraper.go](screenscraper.go#L33-L56) — Credential loading code
-- [main.go](main.go#L41-L44) — Where credentials are loaded at startup
+- [.env.example](.env.example) — Variable reference with descriptions
+- [README.md](README.md#building) — Build commands, targets, and output
+- [src/screenscraper.c](src/screenscraper.c) — Credential loading via compile-time defines
