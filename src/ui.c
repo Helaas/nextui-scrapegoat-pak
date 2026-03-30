@@ -366,13 +366,12 @@ static bool show_rom_list_screen(const console_dir *console,
             int i = filter_map[vi];
             const char *status = rom_status_label(&roms[i], console, mode);
             bool is_inst = installed[i];
-            if (is_inst)
-                snprintf(labels[vi], 512, "\u2713  %s", roms[i].display);
-            else if (status)
-                snprintf(labels[vi], 512, "   %s   [%s]", roms[i].display, status);
-            else
-                snprintf(labels[vi], 512, "   %s", roms[i].display);
+            snprintf(labels[vi], 512, "%s", roms[i].display);
             items[vi].label = labels[vi];
+            if (is_inst)
+                items[vi].trailing_text = "\u2713";
+            else if (status)
+                items[vi].trailing_text = status;
         }
 
         free(installed);
