@@ -1,33 +1,72 @@
 #!/bin/sh
 # build-git-static.sh — Compile a minimal static git binary for ARM64 with HTTPS support.
-# Runs inside Alpine Linux. Outputs: /out/git, /out/git-remote-https
+# Runs inside an Alpine Docker container. Outputs: /out/git, /out/git-remote-https
 #
-# We build our own minimal libcurl (HTTPS only, OpenSSL) to avoid Alpine's
-# libcurl pulling in Kerberos, LDAP, brotli, etc.
+# We build our own minimal OpenSSL + libcurl (HTTPS only) to keep the
+# binaries as small as possible. Alpine's stock OpenSSL static lib is full-
+# featured (~5-6 MB); our minimal build cuts that significantly.
 
 set -e
 
 GIT_VERSION="${GIT_VERSION:-2.47.2}"
 CURL_VERSION="${CURL_VERSION:-8.11.1}"
+OPENSSL_VERSION="${OPENSSL_VERSION:-3.3.2}"
 
-echo "build-git-static: git=${GIT_VERSION} curl=${CURL_VERSION}"
+COMMON_CFLAGS="-Os -ffunction-sections -fdata-sections"
+COMMON_LDFLAGS="-Wl,--gc-sections"
 
-# Build tools + static OpenSSL and zlib (provided by Alpine packages).
+echo "build-git-static: git=${GIT_VERSION} curl=${CURL_VERSION} openssl=${OPENSSL_VERSION}"
+
+# Build tools + zlib (OpenSSL is built from source below).
 apk add --no-cache build-base perl wget ca-certificates \
-    zlib-dev zlib-static openssl-dev openssl-libs-static
+    zlib-dev zlib-static linux-headers
+
+# ── Minimal static OpenSSL ────────────────────────────────────────────────────
+# Only what TLS 1.2/1.3 to GitHub needs: AES-GCM, SHA-256, ECDHE, X25519.
+# Everything else (legacy ciphers, DTLS, CMS, OCSP, engines, etc.) is stripped.
+
+echo "build-git-static: building openssl ${OPENSSL_VERSION}..."
+wget -q "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" \
+     -O /tmp/openssl.tar.gz
+tar -C /tmp -xf /tmp/openssl.tar.gz
+cd "/tmp/openssl-${OPENSSL_VERSION}"
+
+CFLAGS="$COMMON_CFLAGS" \
+perl ./Configure linux-aarch64 \
+    --prefix=/opt/openssl \
+    --openssldir=/opt/openssl/ssl \
+    --libdir=lib \
+    no-shared no-tests no-async \
+    no-apps \
+    no-afalgeng no-capieng no-padlockeng no-devcryptoeng \
+    no-cmp no-cms no-ct no-ocsp no-ts \
+    no-srp no-gost no-legacy \
+    no-comp no-nextprotoneg no-psk \
+    no-dtls no-dtls1 no-dtls1_2 \
+    no-engine \
+    no-idea no-md2 no-mdc2 no-rc5 no-whirlpool \
+    no-seed no-sm2 no-sm3 no-sm4 \
+    no-camellia no-cast no-bf \
+    no-scrypt no-siphash
+
+make -j"$(nproc)"
+make install_sw
+echo "build-git-static: openssl done"
 
 # ── Minimal static libcurl (HTTPS only) ──────────────────────────────────────
 # Build without nghttp2, brotli, libpsl, libidn2, librtmp, libssh2, kerberos,
-# LDAP, RTMP and all non-HTTP protocols. Only OpenSSL + zlib are needed.
+# LDAP, RTMP and all non-HTTP protocols. Uses our minimal OpenSSL + zlib.
 
 echo "build-git-static: building libcurl ${CURL_VERSION}..."
 wget -q "https://curl.se/download/curl-${CURL_VERSION}.tar.gz" -O /tmp/curl.tar.gz
 tar -C /tmp -xf /tmp/curl.tar.gz
 cd "/tmp/curl-${CURL_VERSION}"
 
+CFLAGS="$COMMON_CFLAGS" \
+LDFLAGS="$COMMON_LDFLAGS" \
 ./configure \
     --disable-shared --enable-static \
-    --with-openssl \
+    --with-openssl=/opt/openssl \
     --without-nghttp2 \
     --without-brotli \
     --without-zstd \
@@ -68,8 +107,8 @@ cd "/tmp/git-${GIT_VERSION}"
 # for --libs / --cflags detection instead of any system libcurl.
 make -j"$(nproc)" \
     CURL_CONFIG=/opt/curl/bin/curl-config \
-    CFLAGS="-I/opt/curl/include -Os" \
-    LDFLAGS="-static -L/opt/curl/lib" \
+    CFLAGS="-I/opt/curl/include -I/opt/openssl/include $COMMON_CFLAGS" \
+    LDFLAGS="-static -L/opt/curl/lib -L/opt/openssl/lib $COMMON_LDFLAGS" \
     NO_GETTEXT=1 \
     NO_ICONV=1 \
     NO_PERL=1 \
@@ -80,14 +119,21 @@ make -j"$(nproc)" \
 
 echo "build-git-static: git done"
 
+# ── Strip & copy ─────────────────────────────────────────────────────────────
+
+strip git
 cp git /out/git
 
-if cp git-remote-https /out/git-remote-https 2>/dev/null; then
+if strip git-remote-https 2>/dev/null; then
+    cp git-remote-https /out/git-remote-https
     echo "build-git-static: copied git-remote-https"
 else
     echo "build-git-static: WARNING — git-remote-https not found; HTTPS clones will fail"
 fi
 
-echo "build-git-static: git size $(ls -lh /out/git | awk '{print $5}')"
+echo "build-git-static: git $(ls -lh /out/git | awk '{print $5}')"
+if [ -f /out/git-remote-https ]; then
+    echo "build-git-static: git-remote-https $(ls -lh /out/git-remote-https | awk '{print $5}')"
+fi
 echo "build-git-static: done"
 ls -la /out/

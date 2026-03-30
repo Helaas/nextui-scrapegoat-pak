@@ -1,6 +1,6 @@
 # ScrapeGoat
 
-Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your ROM library on tg5040/tg5050 devices.
+Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your ROM library on `tg5040`, `tg5050`, and `my355` devices.
 
 ## Supported Platforms
 
@@ -9,6 +9,7 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 | `tg5040` (TG5040) | TrimUI Smart Pro | 1280×720 | Docker (ARM64) |
 | `tg5040` (TG3040) | TrimUI Brick | 1024×768 | Docker (ARM64) |
 | `tg5050` | TrimUI Smart Pro S | 1280×720 | Docker (ARM64) |
+| `my355` | Miyoo Flip / RK3566 class | Device-dependent | Docker (ARM64) |
 
 > The Brick and Smart Pro share the same `tg5040` filesystem layout (tools, roms, settings paths are identical). The pak auto-detects the Brick via the `DEVICE` environment variable (`"brick"` vs `"smartpro"`), which NextUI's `launch.sh` exports at startup.
 
@@ -21,8 +22,8 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 - Live progress tracking with thread count, ETA, and API quota display
 - Configurable artwork priority (20 media types available including covers, wheels, fan art, and more)
 - Configurable region priority (USA, Europe, Japan, France, Germany, Spain, Italy, Portugal, World, and more)
-- Supports 46 systems via ScreenScraper (33 bundled + 13 community paks, plus `P8` alias support for PICO-8 folders)
-- Supports 32 systems for cheat downloading via Libretro
+- Supports 47 systems via ScreenScraper (33 bundled + 14 community paks, plus `P8` alias support for PICO-8 folders)
+- Supports 33 systems for cheat downloading via Libretro
 - Shows detailed scraping summary (Total / Found / Not Found / Errors)
 - Fully supports multi-disc games, CUE/BIN disc images, and zip-archived ROMs
 - Handles MD5 hashing with automatic fallback to filename-only matching
@@ -56,7 +57,7 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 
 Supported systems for artwork (46 total):
 - **Nintendo:** Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance (and mGBA), SNES/SFC, Virtual Boy, Famicom Disk System, Nintendo 64, Nintendo DS
-- **Sega:** Master System, Genesis/MD, Game Gear, Mega-CD, 32X, Dreamcast
+- **Sega:** Master System, Genesis/MD, Game Gear, Mega-CD, 32X, Dreamcast, Saturn
 - **Sony:** PlayStation, PlayStation Portable
 - **Atari:** 2600, 5200, 7800, Lynx, Jaguar, Atari 800
 - **NEC:** PC Engine/TurboGrafx, PC Engine SuperGrafx
@@ -68,10 +69,10 @@ Supported systems for artwork (46 total):
 2. **Watch the download progress** — Shows current ROM being matched
 3. **Review summary** — See Total / Downloaded / Not Found / Errors
 
-The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name. When multiple cheat files exist for the same game (e.g. different regions), ScrapeGoat picks the one that best matches your ROM's region and your configured region priority. See [How Matching Works](#how-matching-works) for details.
+The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name. It also understands some multi-title cheat filenames such as `Title A _ Title B`, so alternate regional titles can still resolve to the same cheat file. When multiple cheat files exist for the same game (e.g. different regions), ScrapeGoat picks the one that best matches your ROM's region and your configured region priority. See [How Matching Works](#how-matching-works) for details.
 
-Supported systems for cheats (32 total, based on current Libretro `cht/` directories):
-Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA), SNES/SFC, Super Famicom (Supafaust), Super Game Boy, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, Sega 32X, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600, Atari 5200, Atari 7800, Lynx, ColecoVision, MSX, Nintendo 64, Nintendo DS, PlayStation Portable, Dreamcast, Atari Jaguar, PC Engine SuperGrafx, Intellivision, Atari 800, TIC-80
+Supported systems for cheats (33 total, based on current Libretro `cht/` directories):
+Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA), SNES/SFC, Super Famicom (Supafaust), Super Game Boy, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, Sega 32X, Sega Saturn, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600, Atari 5200, Atari 7800, Lynx, ColecoVision, MSX, Nintendo 64, Nintendo DS, PlayStation Portable, Dreamcast, Atari Jaguar, PC Engine SuperGrafx, Intellivision, Atari 800, TIC-80
 
 ### Settings
 
@@ -176,6 +177,10 @@ Cheat matching uses **normalized name comparison** between your ROM filenames an
    - Removing all punctuation
    - Collapsing whitespace
 2. If the normalized names match exactly, the cheat file is a candidate.
+3. Some Libretro cheat filenames contain **alternate titles** separated by a literal ` _ `, for example `Bare Knuckle II - Shitou e no Requiem _ Streets of Rage II (Japan, Europe).cht`. In those cases, ScrapeGoat also indexes each side as an alias when every segment still looks like a standalone multi-word game title after normalization.
+4. This alias handling is intentionally conservative. It does **not** treat every ` _ ` as an alternate-title separator, so joiner-style titles such as `Dungeons _ Dragons`, `Game _ Watch`, or `Mario _ Luigi` do not create bogus alias-only matches.
+
+ScrapeGoat still uses **exact normalized matching** after that indexing step. It does not use fuzzy matching or generic substring matching.
 
 **Region-aware selection:** The Libretro cheat database often contains multiple cheat files for the same game with different region tags (e.g. `Castlevania (USA) (Code Breaker).cht` and `Castlevania (Europe) (Code Breaker).cht`). When multiple candidates match the same ROM, ScrapeGoat picks the best one using this priority:
 
@@ -187,6 +192,8 @@ Cheat matching uses **normalized name comparison** between your ROM filenames an
 Region keywords are recognized from parenthetical groups in filenames: `USA`, `Europe`, `Japan`, `World`, `France`, `Germany`, `Spain`, `Italy`, `Portugal`, `Australia`, `Korea`, `China`, `Taiwan`, and their common abbreviations (`US`, `EU`, `JP`, `FR`, `DE`, etc.). Non-region tags like `(Code Breaker)`, `(SGB Enhanced)`, and `(Rev 1)` are ignored.
 
 For example, if you have `Pokemon - Emerald Version (USA, Europe).gba` and the Libretro database has both `Pokemon - Emerald Version (USA, Europe) (Code Breaker).cht` and `Pokemon - Feuerrote Edition (G).cht`, only the first matches (both normalize to `pokemon emerald version`). If there were a `(Japan)` variant too, the `(USA, Europe)` one would be selected because it directly overlaps with the ROM's regions.
+
+Another example: `Streets of Rage II (Japen, Europe) (En,Ja)` can match `Bare Knuckle II - Shitou e no Requiem _ Streets of Rage II (Japan, Europe).cht` because `Streets of Rage II` is indexed as an alternate title from that cheat filename.
 
 Existing cheat files on your device are never overwritten — if a `.cht` already exists for a ROM, it is skipped.
 
@@ -300,73 +307,90 @@ SCREENSCRAPER_DEV_PASSWORD=your_dev_password
 
 These are embedded in the binary at build time via the Makefile. The `.env.local` file is in `.gitignore` and will never be committed.
 
-To download and vendor dependencies:
-```bash
-make deps
-```
-
-This vendors Go modules and applies necessary patches to Gabagool for TG5050 support.
+Embedded builds vendor their own curl/OpenSSL runtime bits and package `lib/cacert.pem` alongside the pak.
 
 ### Build Commands
 
 ```bash
-# Auto-detect platform and build
-make
-
-# Build for specific platform
+# Build the mac development binary
 make mac
+
+# Build for specific device platforms
 make tg5040
 make tg5050
+make my355
 
-# Build for all embedded platforms
-make embedded
+# Build all device platforms
+make
 
-# Package as .pak bundles for NextUI
+# Package per-platform bundles
+make package-tg5040
+make package-tg5050
+make package-my355
+
+# Package all supported platforms into release zips + combined .pakz
 make package
-
-# Export TrimUI .pakz (Tools/tg5040 + Tools/tg5050 layout)
-make export-trimui
-
-# Update dependencies and re-apply patches
-make deps
 
 # See all targets
 make help
 ```
 
+`make mac` and `make run-mac` automatically run `setup-nextui-preview-cache` first. The cache
+is stored under `.cache/nextui-preview/` and contains a sparse checkout of only:
+
+- `skeleton/SYSTEM/res/assets@1x.png`
+- `skeleton/SYSTEM/res/assets@2x.png`
+- `skeleton/SYSTEM/res/assets@3x.png`
+- `skeleton/SYSTEM/res/assets@4x.png`
+
+The sparse checkout is pinned to `https://github.com/LoveRetro/NextUI.git` commit
+`7d201cf293f3a253e09749b8bb002e0b9f66d652` (resolved from `main` on March 29, 2026). ScrapeGoat
+also generates local `nextval.json` and `minuisettings.txt` preview fixtures in the same cache.
+
+Licensing note: ScrapeGoat does not redistribute these GPL assets in this MIT-licensed repo or
+its release artifacts. The build helper only fetches them locally on the developer's machine.
+GNU's FAQ treats installer/setup tooling as a separate work and requires corresponding source
+when redistributing GPL-covered object code: [installer](https://www.gnu.org/licenses/gpl-faq.en.html#GPLCompatInstaller),
+[source access](https://www.gnu.org/licenses/gpl-faq.en.html#AnonFTPAndSendSources).
+
 ### Output
 
 | Target | Output |
 |--------|--------|
-| mac | `build/scrapegoat` |
-| tg5040 | `build/release/tg5040/ScrapeGoat.pak.zip` |
-| tg5050 | `build/release/tg5050/ScrapeGoat.pak.zip` |
-| export-trimui | `build/release/trimui/ScrapeGoat.pakz` |
+| mac | `build/mac/scrapegoat` |
+| tg5040 | `build/tg5040/scrapegoat` |
+| tg5050 | `build/tg5050/scrapegoat` |
+| my355 | `build/my355/scrapegoat` |
+| package-tg5040 | `build/release/tg5040/ScrapeGoat.pak.zip` |
+| package-tg5050 | `build/release/tg5050/ScrapeGoat.pak.zip` |
+| package-my355 | `build/release/my355/ScrapeGoat.pak.zip` |
+| package | `build/release/all/ScrapeGoat.pakz` |
 
 The `.pak.zip` includes:
 - Binary (`scrapegoat`)
 - Launch script (`launch.sh`)
 - Pak metadata (`pak.json`)
 - License file (`LICENSE`)
-- Bundled static git binary (with HTTPS support via embedded CA certs)
+- Bundled static git binary
+- Bundled TLS trust store at `lib/cacert.pem` used by both libcurl and git
 
 ## Installing on a Handheld
 
-1. **Build and package:** `make package` or `make export-trimui`
+1. **Build and package:** `make package` for all platforms, or `make package-<platform>` for one target.
 
-2. **If using `make package`:**
+2. **For a per-platform zip:**
    - Extract `ScrapeGoat.pak.zip` to your SD card as `Tools/<platform>/ScrapeGoat.pak/`
-   - Replace `<platform>` with `tg5040` or `tg5050`
+   - Replace `<platform>` with `tg5040`, `tg5050`, or `my355`
 
-3. **If using `make export-trimui`:**
-   - Place `ScrapeGoat.pakz` at the root of your SD card
-   - NextUI will auto-install it upon (re)boot, creating both `Tools/tg5040/ScrapeGoat.pak/` and `Tools/tg5050/ScrapeGoat.pak/`
+3. **For the combined `.pakz`:**
+   - Place `build/release/all/ScrapeGoat.pakz` at the root of your SD card
+   - NextUI will auto-install it into the matching `Tools/<platform>/ScrapeGoat.pak/` directory
 
 4. **Launch** from the NextUI Tools menu
 
 ## Acknowledgements
 
-Built with [Gabagool](https://github.com/BrandonKowalski/gabagool) by [@BrandonKowalski](https://github.com/BrandonKowalski).
+Built with [Apostrophe](https://github.com/Helaas/Apostrophe). The original Go version of this pak was built with [Gabagool](https://github.com/BrandonKowalski/gabagool) by [@BrandonKowalski](https://github.com/BrandonKowalski).
 
 Uses the [Libretro cheat database](https://github.com/libretro/libretro-database) and [ScreenScraper.fr](https://www.screenscraper.fr/) API.
 
