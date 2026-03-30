@@ -47,6 +47,35 @@ static ap_status_bar_opts g_status_bar = {
     .show_wifi = true,
 };
 
+static char g_progress_label[64];
+
+static void refresh_progress_label(void) {
+    queue_stats s = queue_get_stats();
+    if (s.total > 0) {
+        int processed = s.done + s.failed;
+        if (s.failed > 0)
+            snprintf(g_progress_label, sizeof(g_progress_label),
+                     "Track Progress  (%d/%d, %d failed)",
+                     processed, s.total, s.failed);
+        else
+            snprintf(g_progress_label, sizeof(g_progress_label),
+                     "Track Progress  (%d/%d)",
+                     processed, s.total);
+    } else {
+        snprintf(g_progress_label, sizeof(g_progress_label), "Track Progress");
+    }
+}
+
+static Uint32 progress_label_timer_cb(Uint32 interval, void *param) {
+    (void)param;
+    refresh_progress_label();
+    SDL_Event ev;
+    SDL_memset(&ev, 0, sizeof(ev));
+    ev.type = SDL_USEREVENT;
+    SDL_PushEvent(&ev);
+    return interval;
+}
+
 /* ── Helpers ──────────────────────────────────────────────── */
 
 static void show_error(const char *message) {
@@ -220,26 +249,12 @@ typedef enum {
 } main_action;
 
 static main_action show_main_menu(void) {
-    queue_stats qstats = queue_get_stats();
-
-    char progress_label[64];
-    if (qstats.total > 0) {
-        int processed = qstats.done + qstats.failed;
-        if (qstats.failed > 0)
-            snprintf(progress_label, sizeof(progress_label),
-                     "Track Progress  (%d/%d, %d failed)",
-                     processed, qstats.total, qstats.failed);
-        else
-            snprintf(progress_label, sizeof(progress_label),
-                     "Track Progress  (%d/%d)",
-                     processed, qstats.total);
-    } else
-        snprintf(progress_label, sizeof(progress_label), "Track Progress");
+    refresh_progress_label();
 
     ap_list_item items[] = {
         {.label = "Artwork"},
         {.label = "Cheats"},
-        {.label = progress_label},
+        {.label = g_progress_label},
         {.label = "API Usage"},
         {.label = "Settings"},
     };
@@ -253,8 +268,13 @@ static main_action show_main_menu(void) {
     opts.footer_count = 2;
     opts.status_bar = &g_status_bar;
 
+    SDL_TimerID timer = SDL_AddTimer(500, progress_label_timer_cb, NULL);
+
     ap_list_result result;
     int ret = ap_list(&opts, &result);
+
+    SDL_RemoveTimer(timer);
+
     if (ret == AP_CANCELLED || result.selected_index < 0)
         return MAIN_QUIT;
 
@@ -899,8 +919,10 @@ static void show_item_detail(const queue_item *item) {
 
     if (has_error) {
         const char *msg = item->error_msg[0] ? item->error_msg :
-                          (item->status == QUEUE_NOT_FOUND ? "Not found in libretro database" :
-                           "An unknown error occurred");
+                          (item->status == QUEUE_NOT_FOUND
+                              ? (is_cheat ? "Not found in libretro database"
+                                          : "Not found in ScreenScraper.fr database")
+                              : "An unknown error occurred");
         sections[section_count] = (ap_detail_section){
             .type = AP_SECTION_DESCRIPTION,
             .title = "Error",
