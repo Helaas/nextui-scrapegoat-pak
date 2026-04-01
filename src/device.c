@@ -388,6 +388,7 @@ static name_map load_name_map(const char *dir_path) {
 
     int capacity = 64;
     m.entries = malloc(sizeof(name_map_entry) * (size_t)capacity);
+    if (!m.entries) { fclose(f); return m; }
 
     char line[512];
     while (fgets(line, sizeof(line), f)) {
@@ -404,7 +405,9 @@ static name_map load_name_map(const char *dir_path) {
 
         if (m.count >= capacity) {
             capacity *= 2;
-            m.entries = realloc(m.entries, sizeof(name_map_entry) * (size_t)capacity);
+            name_map_entry *tmp = realloc(m.entries, sizeof(name_map_entry) * (size_t)capacity);
+            if (!tmp) break;
+            m.entries = tmp;
         }
         snprintf(m.entries[m.count].filename, 256, "%s", filename);
         snprintf(m.entries[m.count].display,  256, "%s", display);
@@ -521,7 +524,7 @@ static int scan_roms_internal(const char *dir_path, bool show_hidden,
         snprintf(r->name, sizeof(r->name), "%s", name);
         snprintf(r->path, sizeof(r->path), "%s", full_path);
         strip_extension(base_name, r->display, sizeof(r->display));
-        const char *mapped = name_map_lookup(map, name);
+        const char *mapped = name_map_lookup(map, base_name);
         snprintf(r->label, sizeof(r->label), "%s", mapped ? mapped : "");
         r->is_multi_disc = false;
         r->is_cue_folder = false;
