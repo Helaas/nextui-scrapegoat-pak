@@ -1081,8 +1081,10 @@ int parse_cheat_descriptions(const char *cht_path, cheat_desc_list *out) {
     char line[512];
     int total = 0;
 
-    /* First pass: find cheat count */
+    /* First pass: find cheat count (handles both `cheats = 5` and `cheats = "5"`) */
     while (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, " cheats = \"%d\"", &total) == 1)
+            break;
         if (sscanf(line, " cheats = %d", &total) == 1)
             break;
     }

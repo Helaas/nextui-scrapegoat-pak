@@ -18,7 +18,8 @@ typedef struct {
 typedef struct {
     char name[256];      /* filename or folder name */
     char path[PATH_MAX]; /* full path */
-    char display[256];   /* display name (no extension, no ".disabled" suffix) */
+    char display[256];   /* display name (no extension, no ".disabled" suffix) — used for disk lookups */
+    char label[256];     /* human-readable name from map.txt, or empty if not mapped */
     bool is_multi_disc;  /* subdirectory containing {name}.m3u */
     bool is_cue_folder;  /* subdirectory containing {name}.cue */
     bool is_disabled;    /* true when file/folder ends with ".disabled" */
