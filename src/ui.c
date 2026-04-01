@@ -386,7 +386,7 @@ static bool show_rom_list_screen(const console_dir *console,
             int i = filter_map[vi];
             const char *status = rom_status_label(&roms[i], console, mode);
             bool is_inst = installed[i];
-            snprintf(labels[vi], 512, "%s", roms[i].display);
+            snprintf(labels[vi], 512, "%s", roms[i].label[0] ? roms[i].label : roms[i].display);
             items[vi].label = labels[vi];
             if (is_inst)
                 items[vi].trailing_text = "\u2713";
@@ -630,7 +630,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
     int footer_count = is_queued ? 1 : 2; /* hide A if already queued */
 
     ap_detail_opts opts = {
-        .title         = rom->display,
+        .title         = rom->label[0] ? rom->label : rom->display,
         .sections      = sections,
         .section_count = section_count,
         .footer        = footer,
@@ -650,7 +650,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
                 queue_add_cheat_forced(rom, console);
             char msg[256];
             snprintf(msg, sizeof(msg), "Re-queued \"%s\" for %s.",
-                     rom->display, is_art ? "artwork" : "cheats");
+                     rom->label[0] ? rom->label : rom->display, is_art ? "artwork" : "cheats");
             if (show_track_progress_prompt(msg)) {
                 free(sections);
                 free_cheat_detail_section_data(&cheat_detail);
@@ -666,7 +666,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
             if (added) {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "Queued \"%s\" for %s.",
-                         rom->display, is_art ? "artwork" : "cheats");
+                         rom->label[0] ? rom->label : rom->display, is_art ? "artwork" : "cheats");
                 if (show_track_progress_prompt(msg)) {
                     free(sections);
                     free_cheat_detail_section_data(&cheat_detail);

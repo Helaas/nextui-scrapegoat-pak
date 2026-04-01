@@ -366,9 +366,72 @@ static bool is_non_game_extension(const char *name) {
     return false;
 }
 
+/* ── Name map (map.txt) ──────────────────────────────────── */
+
+typedef struct {
+    char filename[256];
+    char display[256];
+} name_map_entry;
+
+typedef struct {
+    name_map_entry *entries;
+    int count;
+} name_map;
+
+static name_map load_name_map(const char *dir_path) {
+    name_map m = {NULL, 0};
+    char map_path[PATH_MAX];
+    snprintf(map_path, sizeof(map_path), "%s/map.txt", dir_path);
+
+    FILE *f = fopen(map_path, "r");
+    if (!f) return m;
+
+    int capacity = 64;
+    m.entries = malloc(sizeof(name_map_entry) * (size_t)capacity);
+
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+            line[--len] = '\0';
+
+        char *tab = strchr(line, '\t');
+        if (!tab) continue;
+        *tab = '\0';
+        const char *filename = line;
+        const char *display  = tab + 1;
+        if (!*filename || !*display) continue;
+
+        if (m.count >= capacity) {
+            capacity *= 2;
+            m.entries = realloc(m.entries, sizeof(name_map_entry) * (size_t)capacity);
+        }
+        snprintf(m.entries[m.count].filename, 256, "%s", filename);
+        snprintf(m.entries[m.count].display,  256, "%s", display);
+        m.count++;
+    }
+    fclose(f);
+    return m;
+}
+
+static const char *name_map_lookup(const name_map *m, const char *filename) {
+    for (int i = 0; i < m->count; i++) {
+        if (strcmp(m->entries[i].filename, filename) == 0)
+            return m->entries[i].display;
+    }
+    return NULL;
+}
+
+static void free_name_map(name_map *m) {
+    free(m->entries);
+    m->entries = NULL;
+    m->count = 0;
+}
+
 /* Internal recursive scanner */
 static int scan_roms_internal(const char *dir_path, bool show_hidden,
-                              rom_file **out, int *count, int *capacity) {
+                              rom_file **out, int *count, int *capacity,
+                              const name_map *map) {
     DIR *d = opendir(dir_path);
     if (!d) return -1;
 
@@ -423,6 +486,8 @@ static int scan_roms_internal(const char *dir_path, bool show_hidden,
                 snprintf(r->name, sizeof(r->name), "%s", name);
                 snprintf(r->path, sizeof(r->path), "%s", full_path);
                 snprintf(r->display, sizeof(r->display), "%s", base_name);
+                const char *mapped = name_map_lookup(map, base_name);
+                snprintf(r->label, sizeof(r->label), "%s", mapped ? mapped : "");
                 r->is_multi_disc = true;
                 r->is_cue_folder = false;
                 r->is_disabled = disabled;
@@ -431,12 +496,14 @@ static int scan_roms_internal(const char *dir_path, bool show_hidden,
                 snprintf(r->name, sizeof(r->name), "%s", name);
                 snprintf(r->path, sizeof(r->path), "%s", full_path);
                 snprintf(r->display, sizeof(r->display), "%s", base_name);
+                const char *mapped = name_map_lookup(map, base_name);
+                snprintf(r->label, sizeof(r->label), "%s", mapped ? mapped : "");
                 r->is_multi_disc = false;
                 r->is_cue_folder = true;
                 r->is_disabled = disabled;
             } else {
                 /* Plain subfolder — recurse */
-                scan_roms_internal(full_path, show_hidden, out, count, capacity);
+                scan_roms_internal(full_path, show_hidden, out, count, capacity, map);
             }
             continue;
         }
@@ -454,6 +521,8 @@ static int scan_roms_internal(const char *dir_path, bool show_hidden,
         snprintf(r->name, sizeof(r->name), "%s", name);
         snprintf(r->path, sizeof(r->path), "%s", full_path);
         strip_extension(base_name, r->display, sizeof(r->display));
+        const char *mapped = name_map_lookup(map, name);
+        snprintf(r->label, sizeof(r->label), "%s", mapped ? mapped : "");
         r->is_multi_disc = false;
         r->is_cue_folder = false;
         r->is_disabled = disabled;
@@ -467,7 +536,9 @@ int scan_roms(const char *console_path, bool show_hidden, rom_file **out) {
     int capacity = 256;
     *out = malloc(sizeof(rom_file) * (size_t)capacity);
 
-    scan_roms_internal(console_path, show_hidden, out, &count, &capacity);
+    name_map map = load_name_map(console_path);
+    scan_roms_internal(console_path, show_hidden, out, &count, &capacity, &map);
+    free_name_map(&map);
     qsort(*out, (size_t)count, sizeof(rom_file), rom_cmp);
     return count;
 }
