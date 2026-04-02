@@ -297,7 +297,6 @@ static int run_git_streaming(const char **argv, const char *cwd,
             if (*p == '\r' || *p == '\n') {
                 *p = '\0';
                 if (p > start) {
-                    fprintf(stderr, "git: %s\n", start);
                     float progress = parse_git_progress(start);
                     if (progress >= 0.0f && set_progress) {
                         got_real_progress = 1;

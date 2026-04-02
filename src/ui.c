@@ -744,9 +744,13 @@ static bool show_library_screen(library_mode mode) {
     system_stats *stats = malloc(sizeof(system_stats) * (size_t)console_count);
     build_console_menu_names(consoles, console_count, names);
 
+    /* Only compute manual counts in manual mode to avoid extra stat() calls
+       on large libraries during artwork/cheat browsing. */
+    const char *manual_dir_for_stats = (mode == LIB_MODE_MANUAL)
+        ? settings.manual_download_dir : NULL;
     for (int i = 0; i < console_count; i++)
         stats[i] = compute_system_stats(&consoles[i], settings.show_hidden,
-                                        settings.manual_download_dir);
+                                        manual_dir_for_stats);
 
     /* Filter consoles by mode and build visible list */
     int *visible_map = malloc(sizeof(int) * (size_t)console_count);
@@ -1652,8 +1656,8 @@ void run_app(void) {
         show_warning("No internet connection detected.\n\n"
                      "Previously downloaded cheats can\n"
                      "still be used offline.\n\n"
-                     "Connect to wifi to scrape artwork\n"
-                     "or download new cheats.");
+                     "Connect to wifi to scrape artwork/\n"
+                     "manuals or download new cheats.");
     } else
 #endif
     if (settings.ss_username[0] == '\0') {
