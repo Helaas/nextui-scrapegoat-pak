@@ -250,8 +250,8 @@ typedef enum {
     MAIN_DOWNLOAD_CHEATS,
     MAIN_DOWNLOAD_MANUALS,
     MAIN_PROGRESS,
-    MAIN_API_USAGE,
     MAIN_SETTINGS,
+    MAIN_API_USAGE,
 } main_action;
 
 static main_action show_main_menu(void) {
@@ -262,8 +262,8 @@ static main_action show_main_menu(void) {
         {.label = "Cheats"},
         {.label = "Manuals"},
         {.label = g_progress_label},
-        {.label = "API Usage"},
         {.label = "Settings"},
+        {.label = "API Usage"},
     };
     ap_footer_item footer[] = {
         {AP_BTN_B, "QUIT", false},
@@ -290,8 +290,8 @@ static main_action show_main_menu(void) {
     case 1: return MAIN_DOWNLOAD_CHEATS;
     case 2: return MAIN_DOWNLOAD_MANUALS;
     case 3: return MAIN_PROGRESS;
-    case 4: return MAIN_API_USAGE;
-    case 5: return MAIN_SETTINGS;
+    case 4: return MAIN_SETTINGS;
+    case 5: return MAIN_API_USAGE;
     default: return MAIN_QUIT;
     }
 }
