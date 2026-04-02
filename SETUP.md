@@ -1,4 +1,4 @@
-# ScrapeGoat PAK — Setup Guide
+# ScrapeGoat Pak — Setup Guide
 
 ## Credentials
 

@@ -88,6 +88,7 @@ typedef struct {
     char *region_prio[MAX_PRIORITY_ITEMS];
     int  region_prio_count;
     bool show_hidden;
+    char manual_download_dir[PATH_MAX];
 } app_settings;
 
 app_settings default_settings(void);
@@ -125,6 +126,13 @@ int scan_roms(const char *console_path, bool show_hidden, rom_file **out);
 
 bool artwork_exists(const char *rom_path, const char *display_name);
 void artwork_src_path(const char *rom_path, const char *display_name, char *buf, size_t buflen);
+
+/* ── Manual helpers ──────────────────────────────────────────────── */
+
+bool manual_exists(const char *manual_download_dir, const char *system_tag,
+                   const char *display_name);
+void manual_dest_path(const char *manual_download_dir, const char *system_tag,
+                      const char *display_name, char *buf, size_t buflen);
 
 /* ── MD5 hashing ──────────────────────────────────────────────── */
 

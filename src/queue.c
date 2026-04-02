@@ -284,6 +284,91 @@ static void *artwork_worker_fn(void *arg) {
     return NULL;
 }
 
+/* ── Manual worker (multi-threaded) ──────────────────────── */
+
+typedef struct {
+    ss_client      client;
+    char         **region_prio;
+    int            region_count;
+    char           manual_download_dir[PATH_MAX];
+    atomic_int     next_index;
+    int            manual_item_count;
+    int           *manual_indices;
+} manual_work;
+
+static manual_work g_manual_work;
+
+static void *manual_worker_fn(void *arg) {
+    (void)arg;
+    char *manual_type = "manuel";
+    char *manual_types[] = {manual_type};
+
+    for (;;) {
+        if (atomic_load(&g_interrupt))
+            break;
+        if (!manager_should_run())
+            break;
+
+        int batch_index = atomic_fetch_add(&g_manual_work.next_index, 1);
+        if (batch_index >= g_manual_work.manual_item_count)
+            break;
+
+        int queue_index = g_manual_work.manual_indices[batch_index];
+        queue_item item;
+        if (!claim_item(queue_index, QUEUE_TYPE_MANUAL, QUEUE_SEARCHING, &item))
+            continue;
+
+        rom_file rom;
+        build_rom_from_item(&item, &rom);
+
+        ss_result result;
+        int search_ret = ss_search_rom(&g_manual_work.client, &rom, item.system_id,
+                                        manual_types, 1,
+                                        g_manual_work.region_prio,
+                                        g_manual_work.region_count,
+                                        &result);
+        if (search_ret == -2)
+            break;
+        if (search_ret >= 0) {
+            atomic_store(&g_api_req_today, result.requests_today);
+            atomic_store(&g_api_max_req, result.max_requests);
+            if (result.max_threads > 0)
+                atomic_store(&g_api_max_threads, result.max_threads);
+        }
+        if (search_ret == 1) {
+            set_item_status(queue_index, QUEUE_NOT_FOUND);
+            continue;
+        }
+        if (search_ret != 0) {
+            const char *err = ss_get_last_error();
+            set_item_error(queue_index, QUEUE_ERROR,
+                           "%s", err ? err : "Search failed");
+            continue;
+        }
+
+        set_item_status(queue_index, QUEUE_DOWNLOADING);
+
+        char dest[PATH_MAX];
+        manual_dest_path(g_manual_work.manual_download_dir,
+                         item.system_tag, item.rom_display,
+                         dest, sizeof(dest));
+
+        int download_ret = ss_download_media(&g_manual_work.client,
+                                             result.media_url, dest);
+        if (download_ret == -2)
+            break;
+        if (download_ret == 0)
+            set_item_status(queue_index, QUEUE_DONE);
+        else {
+            const char *err = ss_get_last_error();
+            set_item_error(queue_index, QUEUE_ERROR,
+                           "%s", err ? err : "Download failed");
+        }
+    }
+
+    return NULL;
+}
+
 /* ── Cheat processing (single-threaded) ──────────────────── */
 
 typedef struct {
@@ -610,6 +695,141 @@ static void *cheat_thread_fn(void *arg) {
     return NULL;
 }
 
+/* ── Manual batch processing ─────────────────────────────── */
+
+static void process_manual_batch(app_settings *settings) {
+    int *indices = NULL;
+    int man_count = 0;
+
+    pthread_mutex_lock(&g_mutex);
+    if (g_count > 0)
+        indices = malloc(sizeof(int) * (size_t)g_count);
+    if (indices) {
+        for (int i = 0; i < g_count; i++) {
+            if (g_items[i].type == QUEUE_TYPE_MANUAL &&
+                g_items[i].status == QUEUE_IDLE) {
+                indices[man_count++] = i;
+            }
+        }
+    }
+    pthread_mutex_unlock(&g_mutex);
+
+    if (!indices || man_count == 0) {
+        free(indices);
+        return;
+    }
+
+    memset(&g_manual_work, 0, sizeof(g_manual_work));
+    snprintf(g_manual_work.client.username,
+             sizeof(g_manual_work.client.username),
+             "%s", settings->ss_username);
+    snprintf(g_manual_work.client.password,
+             sizeof(g_manual_work.client.password),
+             "%s", settings->ss_password);
+    g_manual_work.client.interrupt_signal = &g_interrupt;
+    g_manual_work.region_prio =
+        build_region_types(settings, &g_manual_work.region_count);
+    snprintf(g_manual_work.manual_download_dir,
+             sizeof(g_manual_work.manual_download_dir),
+             "%s", settings->manual_download_dir);
+    g_manual_work.manual_indices = indices;
+    g_manual_work.manual_item_count = man_count;
+    atomic_init(&g_manual_work.next_index, 0);
+
+    if (!g_manual_work.region_prio) {
+        for (int i = 0; i < man_count; i++)
+            set_item_error(indices[i], QUEUE_ERROR,
+                           "Failed to build region settings");
+
+        free(indices);
+        g_manual_work.manual_indices = NULL;
+        g_manual_work.manual_item_count = 0;
+        return;
+    }
+
+    int max_threads = 1;
+    if (man_count > 0) {
+        int first_index = indices[0];
+        queue_item item;
+        if (claim_item(first_index, QUEUE_TYPE_MANUAL, QUEUE_SEARCHING, &item)) {
+            rom_file rom;
+            build_rom_from_item(&item, &rom);
+
+            char *manual_type = "manuel";
+            char *manual_types[] = {manual_type};
+            ss_result result;
+            int ret = ss_search_rom(&g_manual_work.client, &rom, item.system_id,
+                                    manual_types, 1,
+                                    g_manual_work.region_prio,
+                                    g_manual_work.region_count,
+                                    &result);
+            if (ret >= 0) {
+                atomic_store(&g_api_req_today, result.requests_today);
+                atomic_store(&g_api_max_req, result.max_requests);
+                if (result.max_threads > 0)
+                    atomic_store(&g_api_max_threads, result.max_threads);
+            }
+            if (ret == 0) {
+                if (result.max_threads > 1)
+                    max_threads = result.max_threads;
+
+                set_item_status(first_index, QUEUE_DOWNLOADING);
+
+                char dest[PATH_MAX];
+                manual_dest_path(g_manual_work.manual_download_dir,
+                                 item.system_tag, item.rom_display,
+                                 dest, sizeof(dest));
+                if (ss_download_media(&g_manual_work.client,
+                                      result.media_url, dest) == 0) {
+                    set_item_status(first_index, QUEUE_DONE);
+                } else {
+                    const char *err = ss_get_last_error();
+                    set_item_error(first_index, QUEUE_ERROR,
+                                   "%s", err ? err : "Download failed");
+                }
+            } else if (ret == 1) {
+                set_item_status(first_index, QUEUE_NOT_FOUND);
+            } else if (ret != -2) {
+                const char *err = ss_get_last_error();
+                set_item_error(first_index, QUEUE_ERROR,
+                               "%s", err ? err : "Search failed");
+            }
+        }
+        atomic_store(&g_manual_work.next_index, 1);
+    }
+
+    if (man_count > 1 && !atomic_load(&g_interrupt)) {
+        int worker_count = max_threads;
+        if (worker_count > man_count - 1)
+            worker_count = man_count - 1;
+        if (worker_count < 1)
+            worker_count = 1;
+
+        pthread_t *workers = calloc((size_t)worker_count, sizeof(pthread_t));
+        if (workers) {
+            int started = 0;
+            for (int i = 0; i < worker_count; i++) {
+                if (pthread_create(&workers[i], NULL, manual_worker_fn, NULL) == 0)
+                    started++;
+                else
+                    break;
+            }
+            for (int i = 0; i < started; i++)
+                pthread_join(workers[i], NULL);
+            free(workers);
+        }
+    }
+
+    for (int i = 0; i < g_manual_work.region_count; i++)
+        free(g_manual_work.region_prio[i]);
+    free(g_manual_work.region_prio);
+    free(indices);
+
+    g_manual_work.region_prio = NULL;
+    g_manual_work.manual_indices = NULL;
+    g_manual_work.manual_item_count = 0;
+}
+
 static void *manager_thread_fn(void *arg) {
     (void)arg;
 
@@ -631,6 +851,7 @@ static void *manager_thread_fn(void *arg) {
         /* Check what types of work are pending */
         bool has_idle_artwork = false;
         bool has_idle_cheats = false;
+        bool has_idle_manuals = false;
         pthread_mutex_lock(&g_mutex);
         for (int i = 0; i < g_count; i++) {
             if (g_items[i].status == QUEUE_IDLE) {
@@ -638,11 +859,13 @@ static void *manager_thread_fn(void *arg) {
                     has_idle_artwork = true;
                 if (g_items[i].type == QUEUE_TYPE_CHEAT)
                     has_idle_cheats = true;
+                if (g_items[i].type == QUEUE_TYPE_MANUAL)
+                    has_idle_manuals = true;
             }
         }
         pthread_mutex_unlock(&g_mutex);
 
-        /* Start cheat processing in parallel with artwork */
+        /* Start cheat processing in parallel with artwork/manuals */
         pthread_t cheat_thread = 0;
         bool cheat_started = false;
         if (has_idle_cheats && !atomic_load(&g_interrupt)) {
@@ -653,6 +876,10 @@ static void *manager_thread_fn(void *arg) {
         /* Process artwork batch (blocks until done) */
         if (has_idle_artwork && !atomic_load(&g_interrupt))
             process_artwork_batch(&settings);
+
+        /* Process manual batch after artwork (same API, sequential) */
+        if (has_idle_manuals && !atomic_load(&g_interrupt))
+            process_manual_batch(&settings);
 
         /* Wait for cheat thread to finish */
         if (cheat_started)
@@ -942,6 +1169,112 @@ int queue_add_all_cheats_forced(const console_dir *console, bool show_hidden) {
     int added = 0;
     for (int i = 0; i < rom_count; i++) {
         if (queue_add_cheat_internal(&roms[i], console, true))
+            added++;
+    }
+
+    free(roms);
+    return added;
+}
+
+/* ── Manual queue functions ───────────────────────────────── */
+
+static void get_manual_download_dir(char *buf, size_t buflen) {
+    pthread_mutex_lock(&g_settings_mutex);
+    if (g_settings_valid)
+        snprintf(buf, buflen, "%s", g_settings.manual_download_dir);
+    else
+        buf[0] = '\0';
+    pthread_mutex_unlock(&g_settings_mutex);
+}
+
+static bool queue_add_manual_internal(const rom_file *rom,
+                                       const console_dir *console,
+                                       bool force) {
+    int system_id = ss_platform_id(console->tag);
+    if (system_id < 0)
+        return false;
+
+    char manual_dir[PATH_MAX];
+    get_manual_download_dir(manual_dir, sizeof(manual_dir));
+    if (manual_dir[0] == '\0')
+        return false;
+
+    if (!force && manual_exists(manual_dir, console->tag, rom->display))
+        return false;
+
+    pthread_mutex_lock(&g_mutex);
+    for (int i = 0; i < g_count; i++) {
+        if (g_items[i].type == QUEUE_TYPE_MANUAL &&
+            strcmp(g_items[i].rom_path, rom->path) == 0 &&
+            !is_terminal_status(g_items[i].status)) {
+            pthread_mutex_unlock(&g_mutex);
+            return false;
+        }
+    }
+
+    if (g_count >= QUEUE_MAX_ITEMS) {
+        pthread_mutex_unlock(&g_mutex);
+        return false;
+    }
+
+    queue_item *item = &g_items[g_count++];
+    memset(item, 0, sizeof(*item));
+    item->id = g_next_item_id++;
+    if (g_next_item_id == 0)
+        g_next_item_id = 1;
+    item->type = QUEUE_TYPE_MANUAL;
+    snprintf(item->rom_display, sizeof(item->rom_display), "%s", rom->display);
+    snprintf(item->rom_path, sizeof(item->rom_path), "%s", rom->path);
+    snprintf(item->system_tag, sizeof(item->system_tag), "%s", console->tag);
+    snprintf(item->system_display, sizeof(item->system_display), "%s", console->display);
+    snprintf(item->console_path, sizeof(item->console_path), "%s", console->path);
+    item->system_id = system_id;
+    item->status    = QUEUE_IDLE;
+    item->force     = force;
+    set_dirty_locked();
+    pthread_mutex_unlock(&g_mutex);
+
+    ensure_manager_started();
+    return true;
+}
+
+bool queue_add_manual(const rom_file *rom, const console_dir *console) {
+    return queue_add_manual_internal(rom, console, false);
+}
+
+bool queue_add_manual_forced(const rom_file *rom, const console_dir *console) {
+    return queue_add_manual_internal(rom, console, true);
+}
+
+int queue_add_all_manuals(const console_dir *console, bool show_hidden) {
+    rom_file *roms = NULL;
+    int rom_count = scan_roms(console->path, show_hidden, &roms);
+    if (rom_count <= 0) {
+        free(roms);
+        return 0;
+    }
+
+    int added = 0;
+    for (int i = 0; i < rom_count; i++) {
+        if (queue_add_manual(&roms[i], console))
+            added++;
+    }
+
+    free(roms);
+    return added;
+}
+
+int queue_add_all_manuals_forced(const console_dir *console, bool show_hidden) {
+    rom_file *roms = NULL;
+    int rom_count = scan_roms(console->path, show_hidden, &roms);
+    if (rom_count <= 0) {
+        free(roms);
+        return 0;
+    }
+
+    int added = 0;
+    for (int i = 0; i < rom_count; i++) {
+        if (queue_add_manual_internal(&roms[i], console, true))
             added++;
     }
 

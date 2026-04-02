@@ -16,6 +16,7 @@
 typedef enum {
     QUEUE_TYPE_ARTWORK,
     QUEUE_TYPE_CHEAT,
+    QUEUE_TYPE_MANUAL,
 } queue_item_type;
 
 typedef enum {
@@ -88,6 +89,18 @@ int queue_add_all_artwork_forced(const console_dir *console, bool show_hidden);
 
 /* Force re-add all cheats for a console (re-download existing too). Returns count added. */
 int queue_add_all_cheats_forced(const console_dir *console, bool show_hidden);
+
+/* Add a single ROM for manual downloading. Returns true if added. */
+bool queue_add_manual(const rom_file *rom, const console_dir *console);
+
+/* Add all missing manuals for a console. Returns count added. */
+int queue_add_all_manuals(const console_dir *console, bool show_hidden);
+
+/* Force-add manual even if already exists (for re-download). Returns true if added. */
+bool queue_add_manual_forced(const rom_file *rom, const console_dir *console);
+
+/* Force re-add all manuals for a console (re-download existing too). Returns count added. */
+int queue_add_all_manuals_forced(const console_dir *console, bool show_hidden);
 
 /* ── Querying ─────────────────────────────────────────────── */
 
