@@ -18,13 +18,17 @@ int daemon_read_queue(queue_item *out, int max_items, queue_stats *stats_out);
 
 /* ── Lifecycle ───────────────────────────────────────────── */
 
-/* Serialize pending items + settings to disk and fork a background daemon.
+/* Serialize queue state + settings to disk and fork a background daemon.
  * Parent returns 0 on success, -1 on error. Child never returns. */
 int daemon_launch(const queue_item *items, int count,
                   const app_settings *settings);
 
-/* Write a stop-sentinel so the running daemon shuts down gracefully. */
-void daemon_request_stop(void);
+/* Ask the running daemon to shut down and cancel unfinished items. */
+bool daemon_request_stop(void);
+
+/* Request that the running daemon persist state and return ownership to the
+ * foreground app without cancelling unfinished items. */
+bool daemon_request_handoff(void);
 
 /* Remove all daemon IPC files except queue.json (for result import). */
 void daemon_cleanup(void);
@@ -33,6 +37,6 @@ void daemon_cleanup(void);
 void daemon_cleanup_all(void);
 
 /* Entry point for the daemon child process (called via --daemon). */
-int daemon_main(void);
+int daemon_main(int ready_fd);
 
 #endif /* DAEMON_H */

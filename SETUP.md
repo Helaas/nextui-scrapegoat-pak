@@ -88,6 +88,25 @@ make deploy
 make package
 ```
 
+## Runtime Notes
+
+### Background mode handoff
+
+If you quit ScrapeGoat with pending work and choose **Background**, the app writes the full queue to `~/.userdata/shared/ScrapeGoat/daemon/`, starts a headless daemon, and exits. When ScrapeGoat is launched again, the foreground app requests a handoff, the daemon persists a final queue snapshot and exits, and the queue resumes locally in the normal Progress screen with completed and failed entries preserved.
+
+### Background daemon files
+
+The daemon stores its runtime files under:
+
+```
+~/.userdata/shared/ScrapeGoat/daemon/
+```
+
+Important files:
+- `daemon.log` — background-mode log output
+- `queue.json` — persisted queue snapshot used for recovery and relaunch handoff
+- `daemon.pid`, `daemon.lock`, `daemon.control`, `settings.json` — internal IPC/runtime files
+
 
 ## Security Best Practices
 
@@ -111,6 +130,11 @@ make package
 - User credentials are configured via the in-app **Settings** screen, not `.env.local`
 - Go to **Settings** and enter your screenscraper.fr username and password
 
+### Background handoff or resume issues
+- Check the normal app log at `~/.userdata/<platform>/logs/scrapegoat.log`
+- Check the daemon log at `~/.userdata/shared/ScrapeGoat/daemon/daemon.log`
+- If the daemon directory still exists after a failed resume, `queue.json` is the recovery snapshot ScrapeGoat will try to import on the next launch
+
 ## File Overview
 
 | File | Purpose | In Git? |
@@ -120,6 +144,7 @@ make package
 | `Makefile` | Reads `.env.local` and embeds credentials via `-D` flags | Yes |
 | `src/screenscraper.c` | Uses embedded credential defines at compile time | Yes |
 | `~/.userdata/shared/ScrapeGoat/settings.json` | User credentials & app settings (on device) | No |
+| `~/.userdata/shared/ScrapeGoat/daemon/` | Background-mode queue state, IPC files, and daemon log (on device) | No |
 
 ## See Also
 

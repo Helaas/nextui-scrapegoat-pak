@@ -2,8 +2,8 @@
  *
  * The daemon is a headless child process that reuses the existing queue
  * machinery to process pending items.  Communication with the foreground
- * app uses file-based IPC: a PID file, an flock-held lock file, and a
- * periodically-updated JSON queue state file.
+ * app uses file-based IPC: a PID file, a flock-held lock file, a control
+ * file, and a periodically-updated JSON queue state file.
  */
 
 #include "daemon.h"
@@ -56,10 +56,10 @@ static void daemon_settings_path(char *buf, size_t len) {
     snprintf(buf, len, "%s/settings.json", dir);
 }
 
-static void daemon_stop_path(char *buf, size_t len) {
+static void daemon_control_path(char *buf, size_t len) {
     char dir[PATH_MAX];
     daemon_dir(dir, sizeof(dir));
-    snprintf(buf, len, "%s/daemon.stop", dir);
+    snprintf(buf, len, "%s/daemon.control", dir);
 }
 
 static void daemon_log_path(char *buf, size_t len) {
@@ -294,26 +294,12 @@ bool daemon_is_running(void) {
     }
     fclose(f);
 
-    /* Check process exists */
-    if (kill(pid, 0) != 0) {
+    /* Treat any live PID as running; startup readiness is handled by
+     * daemon_launch(), so lock-file visibility is no longer authoritative. */
+    if (kill(pid, 0) != 0 && errno != EPERM) {
         daemon_cleanup();
         return false;
     }
-
-    /* Double-check with flock */
-    char lock_path[PATH_MAX];
-    daemon_lock_path(lock_path, sizeof(lock_path));
-    int fd = open(lock_path, O_RDONLY);
-    if (fd < 0) return false;
-
-    if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
-        /* Got the lock — daemon is NOT holding it, stale state */
-        flock(fd, LOCK_UN);
-        close(fd);
-        daemon_cleanup();
-        return false;
-    }
-    close(fd);
     return true;
 }
 
@@ -350,15 +336,30 @@ int daemon_read_queue(queue_item *out, int max_items, queue_stats *stats_out) {
 
 /* ── Lifecycle ───────────────────────────────────────────── */
 
-void daemon_request_stop(void) {
+static bool daemon_write_command(const char *command) {
     char path[PATH_MAX];
-    daemon_stop_path(path, sizeof(path));
+    daemon_control_path(path, sizeof(path));
 
-    FILE *f = fopen(path, "w");
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+
+    FILE *f = fopen(tmp, "w");
     if (f) {
-        fputs("stop\n", f);
+        fputs(command, f);
         fclose(f);
+        if (rename(tmp, path) == 0)
+            return true;
+        unlink(tmp);
     }
+    return false;
+}
+
+bool daemon_request_stop(void) {
+    return daemon_write_command("stop\n");
+}
+
+bool daemon_request_handoff(void) {
+    return daemon_write_command("handoff\n");
 }
 
 void daemon_cleanup(void) {
@@ -373,7 +374,7 @@ void daemon_cleanup(void) {
     daemon_queue_path(path, sizeof(path));
     /* Keep queue.json — the app reads final results from it */
 
-    daemon_stop_path(path, sizeof(path));
+    daemon_control_path(path, sizeof(path));
     unlink(path);
 
     daemon_settings_path(path, sizeof(path));
@@ -389,7 +390,7 @@ void daemon_cleanup_all(void) {
     unlink(path);
     daemon_queue_path(path, sizeof(path));
     unlink(path);
-    daemon_stop_path(path, sizeof(path));
+    daemon_control_path(path, sizeof(path));
     unlink(path);
     daemon_settings_path(path, sizeof(path));
     unlink(path);
@@ -413,10 +414,10 @@ int daemon_launch(const queue_item *items, int count,
     if (save_settings_to(spath, settings) != 0)
         return -1;
 
-    /* Remove any stale stop sentinel */
-    char stop_path[PATH_MAX];
-    daemon_stop_path(stop_path, sizeof(stop_path));
-    unlink(stop_path);
+    /* Remove any stale control command */
+    char control_path[PATH_MAX];
+    daemon_control_path(control_path, sizeof(control_path));
+    unlink(control_path);
 
     /* Build path to our own executable for re-exec */
     char self[PATH_MAX];
@@ -438,22 +439,28 @@ int daemon_launch(const queue_item *items, int count,
     }
 #endif
 
+    int ready_pipe[2];
+    if (pipe(ready_pipe) != 0)
+        return -1;
+
     pid_t pid = fork();
     if (pid < 0) return -1;
 
     if (pid > 0) {
-        /* Parent: write PID file and return */
-        char pid_path[PATH_MAX];
-        daemon_pid_path(pid_path, sizeof(pid_path));
-        FILE *f = fopen(pid_path, "w");
-        if (f) {
-            fprintf(f, "%d\n", pid);
-            fclose(f);
-        }
-        return 0;
+        close(ready_pipe[1]);
+
+        char ready = '\0';
+        ssize_t nread;
+        do {
+            nread = read(ready_pipe[0], &ready, 1);
+        } while (nread < 0 && errno == EINTR);
+        close(ready_pipe[0]);
+
+        return (nread == 1 && ready == '1') ? 0 : -1;
     }
 
     /* ── Child process ─────────────────────────────────────── */
+    close(ready_pipe[0]);
 
     /* Detach from controlling terminal */
     setsid();
@@ -469,10 +476,18 @@ int daemon_launch(const queue_item *items, int count,
     }
     close(STDIN_FILENO);
 
+    char ready_arg[64];
+    snprintf(ready_arg, sizeof(ready_arg), "--ready-fd=%d", ready_pipe[1]);
+
     /* Re-exec as daemon to get a clean process state */
-    execl(self, self, "--daemon", (char *)NULL);
+    execl(self, self, "--daemon", ready_arg, (char *)NULL);
 
     /* If execl fails, exit */
+    {
+        char ready = '0';
+        write(ready_pipe[1], &ready, 1);
+        close(ready_pipe[1]);
+    }
     _exit(1);
 }
 
@@ -487,15 +502,50 @@ static void daemon_signal_handler(int sig) {
 
 /* ── Daemon main loop ────────────────────────────────────── */
 
-static bool stop_requested(void) {
-    if (g_daemon_stop) return true;
+typedef enum {
+    DAEMON_CMD_NONE = 0,
+    DAEMON_CMD_STOP,
+    DAEMON_CMD_HANDOFF,
+} daemon_command;
 
-    char path[PATH_MAX];
-    daemon_stop_path(path, sizeof(path));
-    return access(path, F_OK) == 0;
+static void daemon_report_ready(int ready_fd, bool success) {
+    if (ready_fd < 0)
+        return;
+
+    char ready = success ? '1' : '0';
+    ssize_t written;
+    do {
+        written = write(ready_fd, &ready, 1);
+    } while (written < 0 && errno == EINTR);
+    close(ready_fd);
 }
 
-int daemon_main(void) {
+static daemon_command daemon_read_command(void) {
+    if (g_daemon_stop)
+        return DAEMON_CMD_STOP;
+
+    char path[PATH_MAX];
+    daemon_control_path(path, sizeof(path));
+
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return DAEMON_CMD_NONE;
+
+    char buf[32] = {0};
+    if (!fgets(buf, sizeof(buf), f)) {
+        fclose(f);
+        return DAEMON_CMD_NONE;
+    }
+    fclose(f);
+
+    if (strncmp(buf, "handoff", 7) == 0)
+        return DAEMON_CMD_HANDOFF;
+    if (strncmp(buf, "stop", 4) == 0)
+        return DAEMON_CMD_STOP;
+    return DAEMON_CMD_NONE;
+}
+
+int daemon_main(int ready_fd) {
     fprintf(stderr, "scrapegoat-daemon: starting (pid=%d)\n", getpid());
 
     /* Acquire lock file */
@@ -505,11 +555,13 @@ int daemon_main(void) {
     int lock_fd = open(lock_path, O_WRONLY | O_CREAT, 0644);
     if (lock_fd < 0) {
         fprintf(stderr, "scrapegoat-daemon: failed to open lock file\n");
+        daemon_report_ready(ready_fd, false);
         return 1;
     }
     if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
         fprintf(stderr, "scrapegoat-daemon: another daemon is already running\n");
         close(lock_fd);
+        daemon_report_ready(ready_fd, false);
         return 1;
     }
 
@@ -539,6 +591,7 @@ int daemon_main(void) {
         fprintf(stderr, "scrapegoat-daemon: out of memory\n");
         flock(lock_fd, LOCK_UN);
         close(lock_fd);
+        daemon_report_ready(ready_fd, false);
         return 1;
     }
 
@@ -551,6 +604,7 @@ int daemon_main(void) {
         free(items);
         flock(lock_fd, LOCK_UN);
         close(lock_fd);
+        daemon_report_ready(ready_fd, false);
         return 0;
     }
 
@@ -581,11 +635,14 @@ int daemon_main(void) {
     queue_load_items(items, item_count);
     free(items);
     free_settings(&settings);
+    daemon_report_ready(ready_fd, true);
+    ready_fd = -1;
 
     fprintf(stderr, "scrapegoat-daemon: processing started\n");
 
     /* Poll loop: update state file + check for stop signal */
-    while (!stop_requested()) {
+    daemon_command command = DAEMON_CMD_NONE;
+    while ((command = daemon_read_command()) == DAEMON_CMD_NONE) {
         queue_stats stats = queue_get_stats();
 
         if (stats.pending <= 0)
@@ -600,20 +657,29 @@ int daemon_main(void) {
         }
 
         /* Sleep 2 seconds between updates */
-        for (int i = 0; i < 20 && !stop_requested(); i++)
+        for (int i = 0; i < 20; i++) {
+            if ((command = daemon_read_command()) != DAEMON_CMD_NONE)
+                break;
             usleep(100000); /* 100ms */
+        }
+        if (command != DAEMON_CMD_NONE)
+            break;
     }
 
     /* Write final state */
     fprintf(stderr, "scrapegoat-daemon: shutting down\n");
 
-    if (stop_requested()) {
+    queue_item *snap = calloc(QUEUE_MAX_ITEMS, sizeof(queue_item));
+    if (command == DAEMON_CMD_STOP) {
         queue_cancel_all();
     }
 
-    queue_item *snap = calloc(QUEUE_MAX_ITEMS, sizeof(queue_item));
     if (snap) {
-        int n = queue_snapshot(snap, QUEUE_MAX_ITEMS);
+        int n;
+        if (command == DAEMON_CMD_HANDOFF)
+            n = queue_handoff_snapshot(snap, QUEUE_MAX_ITEMS);
+        else
+            n = queue_snapshot(snap, QUEUE_MAX_ITEMS);
         serialize_queue(qpath, snap, n);
         free(snap);
     }
@@ -623,8 +689,8 @@ int daemon_main(void) {
     /* Clean up daemon files (keep queue.json for the app to read) */
     {
         char tmp_path[PATH_MAX];
-        daemon_stop_path(tmp_path, sizeof(tmp_path));
-        unlink(tmp_path); /* remove stop sentinel */
+        daemon_control_path(tmp_path, sizeof(tmp_path));
+        unlink(tmp_path); /* remove control command */
 
         daemon_pid_path(tmp_path, sizeof(tmp_path));
         unlink(tmp_path); /* remove PID file */

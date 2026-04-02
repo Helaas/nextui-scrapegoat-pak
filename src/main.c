@@ -66,8 +66,12 @@ static void configure_desktop_nextui_preview(void) {
 
 int main(int argc, char *argv[]) {
     /* Background daemon mode: headless, no UI */
-    if (argc > 1 && strcmp(argv[0 + 1], "--daemon") == 0)
-        return daemon_main();
+    if (argc > 1 && strcmp(argv[1], "--daemon") == 0) {
+        int ready_fd = -1;
+        if (argc > 2 && strncmp(argv[2], "--ready-fd=", 11) == 0)
+            ready_fd = atoi(argv[2] + 11);
+        return daemon_main(ready_fd);
+    }
 
     fprintf(stderr, "scrapegoat: starting (platform=%s)\n", AP_PLATFORM_NAME);
 
