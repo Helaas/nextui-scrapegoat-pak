@@ -351,7 +351,11 @@ int init_cheat_repo(atomic_int *interrupt_signal,
 
     const char *git = get_git_bin();
     const char *argv[] = {
-        git, "clone",
+        git,
+        "-c", "http.connectTimeout=10",
+        "-c", "http.lowSpeedLimit=100",
+        "-c", "http.lowSpeedTime=30",
+        "clone",
         "--sparse",
         "--filter=blob:none",
         "--depth=1",
@@ -393,7 +397,11 @@ int ensure_system_checked_out(const char *libretro_dir_name,
 
     const char *git = get_git_bin();
     const char *argv[] = {
-        git, "-C", repo,
+        git,
+        "-c", "http.connectTimeout=10",
+        "-c", "http.lowSpeedLimit=100",
+        "-c", "http.lowSpeedTime=30",
+        "-C", repo,
         "sparse-checkout", "add", checkout_path,
         NULL,
     };
@@ -418,7 +426,11 @@ int update_cheat_repo(atomic_int *interrupt_signal,
     /* Fetch with blob filter so only tree/commit objects are transferred,
        matching the --filter=blob:none used at clone time. */
     const char *fetch_argv[] = {
-        git, "-C", repo,
+        git,
+        "-c", "http.connectTimeout=10",
+        "-c", "http.lowSpeedLimit=100",
+        "-c", "http.lowSpeedTime=30",
+        "-C", repo,
         "fetch", "--filter=blob:none", "--depth=1", "--progress",
         NULL,
     };

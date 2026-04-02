@@ -1531,11 +1531,44 @@ static void show_settings_screen(void) {
 
 /* ── Main application loop ────────────────────────────────── */
 
+#ifndef PLATFORM_MAC
+/* Returns true if the device has a default gateway (i.e. is likely online).
+ * Reads /proc/net/route and looks for a route with destination 0.0.0.0
+ * and a non-zero gateway. No network traffic is generated. */
+static bool has_default_route(void) {
+    FILE *f = fopen("/proc/net/route", "r");
+    if (!f)
+        return false;
+    char line[256];
+    fgets(line, sizeof(line), f); /* skip header */
+    while (fgets(line, sizeof(line), f)) {
+        char iface[32];
+        unsigned long dest, gw;
+        if (sscanf(line, "%31s %lx %lx", iface, &dest, &gw) == 3 &&
+                dest == 0 && gw != 0) {
+            fclose(f);
+            return true;
+        }
+    }
+    fclose(f);
+    return false;
+}
+#endif
+
 void run_app(void) {
     /* Load initial settings into queue */
     app_settings settings = load_settings();
     queue_set_settings(&settings);
 
+#ifndef PLATFORM_MAC
+    if (!has_default_route()) {
+        show_warning("No internet connection detected.\n\n"
+                     "Previously downloaded cheats can\n"
+                     "still be used offline.\n\n"
+                     "Connect to wifi to scrape artwork\n"
+                     "or download new cheats.");
+    } else
+#endif
     if (settings.ss_username[0] == '\0') {
         show_warning("No ScreenScraper.fr user credentials set.\n\nScraping will proceed at basic rate\n(~1 req/min, single-threaded).\n\nFor much faster speeds, go to Settings\nand add your username and password.");
     }
