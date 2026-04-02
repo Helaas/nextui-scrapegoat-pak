@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <poll.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -95,7 +96,7 @@ static char **build_git_env(void) {
     for (char **entry = environ; *entry; entry++)
         count++;
 
-    char **env = malloc(sizeof(char *) * (size_t)(count + 4));
+    char **env = malloc(sizeof(char *) * (size_t)(count + 8));
     if (!env)
         return NULL;
 
@@ -107,6 +108,7 @@ static char **build_git_env(void) {
     static _Thread_local char ld_path[PATH_MAX];
     static _Thread_local char exec_path[PATH_MAX];
     static char template_dir[] = "GIT_TEMPLATE_DIR=";
+    static char no_prompt[]    = "GIT_TERMINAL_PROMPT=0";
 
     char exe_dir[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
@@ -123,6 +125,7 @@ static char **build_git_env(void) {
         env[idx++] = ld_path;
         env[idx++] = exec_path;
         env[idx++] = template_dir;
+        env[idx++] = no_prompt;
     }
 #endif
 
@@ -145,18 +148,68 @@ static void get_repo_lock_path(char *buf, size_t buflen) {
 }
 
 static float parse_git_progress(const char *line) {
-    const char *progress = strstr(line, "Receiving objects:");
-    if (!progress)
-        return -1.0f;
-
-    progress += strlen("Receiving objects:");
-    while (*progress == ' ')
-        progress++;
-
-    int pct = atoi(progress);
-    if (pct >= 0 && pct <= 100)
-        return (float)pct / 100.0f;
+    static const char * const markers[] = {
+        "Receiving objects:",
+        "Checking out files:",
+        "Updating files:",
+    };
+    for (size_t i = 0; i < sizeof(markers) / sizeof(markers[0]); i++) {
+        const char *progress = strstr(line, markers[i]);
+        if (!progress)
+            continue;
+        progress += strlen(markers[i]);
+        while (*progress == ' ')
+            progress++;
+        int pct = atoi(progress);
+        if (pct >= 0 && pct <= 100)
+            return (float)pct / 100.0f;
+    }
     return -1.0f;
+}
+
+/* Run a git command and capture up to `cap` bytes of stdout.
+ * Returns the process exit code, or -1 on fork/pipe failure. */
+static int run_git_capture(const char **argv, char *out, size_t cap) {
+    int pipe_fd[2];
+    if (pipe(pipe_fd) != 0)
+        return -1;
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+        return -1;
+    }
+
+    if (pid == 0) {
+        close(pipe_fd[0]);
+        dup2(pipe_fd[1], STDOUT_FILENO);
+        close(pipe_fd[1]);
+        close(STDERR_FILENO);
+
+        char **env = build_git_env();
+        if (!env)
+            _exit(127);
+
+        execve(argv[0], (char *const *)argv, env);
+        _exit(127);
+    }
+
+    close(pipe_fd[1]);
+    size_t total = 0;
+    while (total < cap - 1) {
+        ssize_t n = read(pipe_fd[0], out + total, cap - 1 - total);
+        if (n <= 0) break;
+        total += (size_t)n;
+    }
+    out[total] = '\0';
+    close(pipe_fd[0]);
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status))
+        return WEXITSTATUS(status);
+    return -1;
 }
 
 static int run_git_streaming(const char **argv, const char *cwd,
@@ -201,11 +254,34 @@ static int run_git_streaming(const char **argv, const char *cwd,
     char buf[4096];
     size_t buf_pos = 0;
     int killed = 0;
+    int fake_timeouts = 0;
+    int got_real_progress = 0;
 
     while (1) {
         if (interrupt_signal && atomic_load(interrupt_signal) != 0 && !killed) {
             kill(pid, SIGKILL);
             killed = 1;
+        }
+
+        struct pollfd pfd = { .fd = pipe_fd[0], .events = POLLIN };
+        int ready = poll(&pfd, 1, 500);
+        if (ready < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (ready == 0) {
+            /* 500 ms timeout — no output from git yet.  After a 2 s grace
+             * period (4 timeouts), nudge the progress bar so the user can
+             * see work is happening (e.g. during sparse-checkout blob
+             * download where git emits no progress on a non-TTY pipe). */
+            fake_timeouts++;
+            if (fake_timeouts > 4 && set_progress && !got_real_progress) {
+                float fake = (float)(fake_timeouts - 4) * 0.005f;
+                if (fake > 0.90f) fake = 0.90f;
+                set_progress(progress_offset + fake * progress_scale);
+            }
+            continue;
         }
 
         ssize_t n = read(pipe_fd[0], buf + buf_pos, sizeof(buf) - buf_pos - 1);
@@ -220,8 +296,10 @@ static int run_git_streaming(const char **argv, const char *cwd,
             if (*p == '\r' || *p == '\n') {
                 *p = '\0';
                 if (p > start) {
+                    fprintf(stderr, "git: %s\n", start);
                     float progress = parse_git_progress(start);
                     if (progress >= 0.0f && set_progress) {
+                        got_real_progress = 1;
                         set_progress(progress_offset + progress * progress_scale);
                     }
                 }
@@ -440,12 +518,37 @@ int update_cheat_repo(atomic_int *interrupt_signal,
     if (ret != CHEAT_OP_OK)
         return ret;
 
-    const char *merge_argv[] = {
+    /* Compare HEAD to FETCH_HEAD — skip the expensive reset when the repo
+     * is already at the latest commit (avoids rewriting thousands of files
+     * on slow FAT32 storage for zero actual changes). */
+    char head_sha[64] = {0}, fetch_sha[64] = {0};
+    const char *head_argv[] = { git, "-C", repo, "rev-parse", "HEAD", NULL };
+    const char *fh_argv[]   = { git, "-C", repo, "rev-parse", "FETCH_HEAD", NULL };
+
+    if (run_git_capture(head_argv, head_sha, sizeof(head_sha)) == 0 &&
+        run_git_capture(fh_argv, fetch_sha, sizeof(fetch_sha)) == 0) {
+        char *nl;
+        if ((nl = strchr(head_sha, '\n')))  *nl = '\0';
+        if ((nl = strchr(fetch_sha, '\n'))) *nl = '\0';
+
+        if (strcmp(head_sha, fetch_sha) == 0) {
+            fprintf(stderr, "cheats: repo already up to date (%s)\n", head_sha);
+            if (set_progress)
+                set_progress(progress_offset + progress_scale);
+            return CHEAT_OP_OK;
+        }
+    }
+
+    /* reset --hard avoids "refusing to merge unrelated histories" that occurs
+     * with depth-1 shallow clones where FETCH_HEAD has no shared ancestor
+     * with the local shallow HEAD.  The repo is never committed to locally so
+     * data loss is impossible; sparse-checkout patterns survive the reset. */
+    const char *reset_argv[] = {
         git, "-C", repo,
-        "merge", "--ff-only", "FETCH_HEAD",
+        "reset", "--hard", "FETCH_HEAD",
         NULL,
     };
-    return run_repo_git_streaming(merge_argv, NULL, interrupt_signal,
+    return run_repo_git_streaming(reset_argv, NULL, interrupt_signal,
                                   set_progress, progress_scale * 0.1f,
                                   progress_offset + progress_scale * 0.9f);
 }
@@ -929,6 +1032,22 @@ run_result download_cheats_for_console(const console_dir *console,
     if (set_progress)
         set_progress(0.0f);
 
+    /* Check whether this system's cheat directory already exists.  When it
+     * does not, we skip the repo-wide fetch/update: sparse-checkout add will
+     * pull only the blobs it needs without an extra network round-trip.
+     * When the directory already exists the user is re-downloading cheats, so
+     * we update the repo first to pick up any upstream changes. */
+    char system_dir_check[PATH_MAX];
+    {
+        char repo_check[PATH_MAX];
+        get_cheat_repo_path(repo_check, sizeof(repo_check));
+        snprintf(system_dir_check, sizeof(system_dir_check),
+                 "%s/cht/%s", repo_check, libretro_dir_name);
+    }
+    struct stat system_dir_st;
+    bool system_already_checked_out = (stat(system_dir_check, &system_dir_st) == 0
+                                       && S_ISDIR(system_dir_st.st_mode));
+
     if (!is_repo_initialized()) {
         int init_result = init_cheat_repo(interrupt_signal, set_message, set_progress, 0.3f, 0.0f);
         if (init_result == CHEAT_OP_CANCELLED) {
@@ -944,7 +1063,8 @@ run_result download_cheats_for_console(const console_dir *console,
             result = make_run_error(summary, "Failed to clone the cheat database.");
             goto cleanup;
         }
-    } else {
+    } else if (system_already_checked_out) {
+        /* Re-download: update the repo so any new cheat files are picked up. */
         int update_result = update_cheat_repo(interrupt_signal, set_message, set_progress, 0.3f, 0.0f);
         if (update_result == CHEAT_OP_CANCELLED) {
             cancelled = true;
@@ -958,6 +1078,9 @@ run_result download_cheats_for_console(const console_dir *console,
         if (update_result != CHEAT_OP_OK) {
             fprintf(stderr, "cheats: pull failed (using existing data)\n");
         }
+    } else {
+        fprintf(stderr, "cheats: skipping fetch — checking out %s for the first time\n",
+                libretro_dir_name);
     }
 
     if (set_progress)
