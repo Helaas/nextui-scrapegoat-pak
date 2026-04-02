@@ -152,6 +152,7 @@ static float parse_git_progress(const char *line) {
         "Receiving objects:",
         "Checking out files:",
         "Updating files:",
+        "Updating index flags:",
     };
     for (size_t i = 0; i < sizeof(markers) / sizeof(markers[0]); i++) {
         const char *progress = strstr(line, markers[i]);
@@ -502,14 +503,17 @@ int update_cheat_repo(atomic_int *interrupt_signal,
     const char *git = get_git_bin();
 
     /* Fetch with blob filter so only tree/commit objects are transferred,
-       matching the --filter=blob:none used at clone time. */
+       matching the --filter=blob:none used at clone time.  No --depth=1 here:
+       that would disconnect the shallow graph, forcing a full working-tree
+       rewrite on merge.  Without it git extends the existing history,
+       enabling a true fast-forward that only touches changed files. */
     const char *fetch_argv[] = {
         git,
         "-c", "http.connectTimeout=10",
         "-c", "http.lowSpeedLimit=100",
         "-c", "http.lowSpeedTime=30",
         "-C", repo,
-        "fetch", "--filter=blob:none", "--depth=1", "--progress",
+        "fetch", "--filter=blob:none", "--progress",
         NULL,
     };
     int ret = run_repo_git_streaming(fetch_argv, NULL, interrupt_signal,
@@ -539,16 +543,12 @@ int update_cheat_repo(atomic_int *interrupt_signal,
         }
     }
 
-    /* reset --hard avoids "refusing to merge unrelated histories" that occurs
-     * with depth-1 shallow clones where FETCH_HEAD has no shared ancestor
-     * with the local shallow HEAD.  The repo is never committed to locally so
-     * data loss is impossible; sparse-checkout patterns survive the reset. */
-    const char *reset_argv[] = {
+    const char *merge_argv[] = {
         git, "-C", repo,
-        "reset", "--hard", "FETCH_HEAD",
+        "merge", "--ff-only", "FETCH_HEAD",
         NULL,
     };
-    return run_repo_git_streaming(reset_argv, NULL, interrupt_signal,
+    return run_repo_git_streaming(merge_argv, NULL, interrupt_signal,
                                   set_progress, progress_scale * 0.1f,
                                   progress_offset + progress_scale * 0.9f);
 }
