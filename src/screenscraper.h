@@ -81,7 +81,13 @@ run_result scrape_console(const console_dir *console, bool missing_only,
                           progress_fn set_progress,
                           message_fn set_message);
 
-/* ── Error access ─────────────────────────────────────────── */
+/* ── Headless mode (daemon) ───────────────────────────────── */
+
+/* Enable headless mode for JPEG-to-PNG conversion (uses stb_image + miniz
+ * instead of SDL_image). Must be called before any downloads. */
+void ss_set_headless(bool headless);
+
+/* ── Error access ───────────────────────────────────────���─── */
 
 /* Returns the last error message for the calling thread, or NULL. */
 const char *ss_get_last_error(void);

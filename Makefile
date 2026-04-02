@@ -25,7 +25,7 @@ TG5050_TOOLCHAIN := ghcr.io/loveretro/tg5050-toolchain:latest
 MY355_TOOLCHAIN  := ghcr.io/loveretro/my355-toolchain:latest
 ADB ?= adb
 
-COMMON_INCLUDES := -I$(APOSTROPHE_DIR)/include -Ithird_party/cJSON -Ithird_party/md5 -Ithird_party/miniz
+COMMON_INCLUDES := -I$(APOSTROPHE_DIR)/include -Ithird_party/cJSON -Ithird_party/md5 -Ithird_party/miniz -Ithird_party/stb
 
 # ── Credential validation ─────────────────────────────────────
 -include .env.local

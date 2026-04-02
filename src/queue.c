@@ -1428,3 +1428,30 @@ int queue_snapshot(queue_item *out, int max_items) {
     pthread_mutex_unlock(&g_mutex);
     return count;
 }
+
+int queue_load_items(const queue_item *items, int count) {
+    if (count > QUEUE_MAX_ITEMS)
+        count = QUEUE_MAX_ITEMS;
+
+    pthread_mutex_lock(&g_mutex);
+    bool has_pending = false;
+    for (int i = 0; i < count; i++) {
+        g_items[i] = items[i];
+        /* Reset in-progress items to idle so workers pick them up */
+        if (!is_terminal_status(g_items[i].status)) {
+            g_items[i].status = QUEUE_IDLE;
+            g_items[i].error_msg[0] = '\0';
+            has_pending = true;
+        }
+        if (g_items[i].id >= g_next_item_id)
+            g_next_item_id = g_items[i].id + 1;
+    }
+    g_count = count;
+    g_dirty = true;
+    pthread_mutex_unlock(&g_mutex);
+
+    if (has_pending)
+        ensure_manager_started();
+
+    return count;
+}

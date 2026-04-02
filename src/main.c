@@ -9,6 +9,7 @@
 #define AP_WIDGETS_IMPLEMENTATION
 #include "apostrophe_widgets.h"
 
+#include "daemon.h"
 #include "device.h"
 #include "queue.h"
 #include "screenscraper.h"
@@ -64,8 +65,9 @@ static void configure_desktop_nextui_preview(void) {
 #endif
 
 int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
+    /* Background daemon mode: headless, no UI */
+    if (argc > 1 && strcmp(argv[0 + 1], "--daemon") == 0)
+        return daemon_main();
 
     fprintf(stderr, "scrapegoat: starting (platform=%s)\n", AP_PLATFORM_NAME);
 
