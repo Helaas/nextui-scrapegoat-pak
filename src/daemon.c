@@ -25,6 +25,12 @@
 #include <mach-o/dyld.h>
 #endif
 
+/* Suppress GCC warnings about snprintf truncation when combining
+   PATH_MAX-sized strings — truncation is safe by design. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
+
 /* ── Path helpers ────────────────────────────────────────── */
 
 static void daemon_dir(char *buf, size_t len) {
