@@ -1,6 +1,6 @@
 # ScrapeGoat
 
-Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your ROM library on `tg5040`, `tg5050`, and `my355` devices.
+A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and manuals from [ScreenScraper.fr](https://www.screenscraper.fr/) and downloads cheats from [Libretro](https://github.com/libretro/libretro-database) for your ROM library on `tg5040`, `tg5050`, and `my355` devices.
 
 ## Supported Platforms
 
@@ -16,8 +16,9 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 ## What It Does
 
 - Scrapes cover art and media from ScreenScraper.fr for all your ROMs
+- Downloads PDF game manuals from ScreenScraper.fr to a configurable directory
 - Automatically detects your ROM library by console and game count
-- Choose to scrape **missing only** (skip games with existing artwork) or **all ROMs** (overwrite existing)
+- Choose to scrape **missing only** (skip games with existing artwork/manuals) or **all ROMs** (overwrite existing)
 - Downloads `.cht` cheat files from the Libretro cheat database for supported systems
 - Live progress tracking with thread count, ETA, and API quota display
 - Configurable artwork priority (20 media types available including covers, wheels, fan art, and more)
@@ -33,9 +34,10 @@ Scrape artwork from ScreenScraper.fr and download cheats from Libretro for your 
 
 1. Launch **ScrapeGoat** from the NextUI Tools menu
 2. Pick one of:
-   - **Scrape Artwork** — Download cover art and media for your ROM library
-   - **Download Cheats** — Get `.cht` cheat files for your games
-   - **Settings** — Configure credentials, artwork priority, and region priority
+   - **Artwork** — Download cover art and media for your ROM library
+   - **Cheats** — Get `.cht` cheat files for your games
+   - **Manuals** — Download PDF game manuals (requires a download directory to be set in Settings)
+   - **Settings** — Configure credentials, artwork priority, region priority, and manual download directory
 3. Follow the on-screen prompts
 
 ## Menu Options
@@ -74,9 +76,21 @@ The pak downloads cheats from the official [Libretro cheat database](https://git
 Supported systems for cheats (33 total, based on current Libretro `cht/` directories):
 Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA), SNES/SFC, Super Famicom (Supafaust), Super Game Boy, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, Sega 32X, Sega Saturn, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600, Atari 5200, Atari 7800, Lynx, ColecoVision, MSX, Nintendo 64, Nintendo DS, PlayStation Portable, Dreamcast, Atari Jaguar, PC Engine SuperGrafx, Intellivision, Atari 800, TIC-80
 
+### Download Manuals
+
+1. **Set a download directory** — Before downloading manuals, go to **Settings → Manual download directory** and choose where to save them. You can create new folders from within the file picker.
+2. **Pick a console** — Choose which system to download manuals for (only systems with ScreenScraper support are shown)
+3. **Choose download mode:**
+   - **Download missing only** — Skip games that already have a manual
+   - **Re-download all** — Overwrite existing manuals
+4. **Watch the live download** — Same real-time progress as artwork scraping (threads, ETA, quota)
+5. **View manuals** — You'll need a PDF viewer Pak like **SDLReader** installed on your device to open the downloaded PDFs
+
+Manuals are region-aware and use the same **Region Priority** as artwork. The ScreenScraper API provides manuals for many (but not all) games — games without a manual are counted as "Not Found" in the summary.
+
 ### Settings
 
-Configure your ScreenScraper credentials, customize artwork and region priority, and control visibility of hidden/disabled ROMs.
+Configure your ScreenScraper credentials, customize artwork and region priority, set the manual download directory, and control visibility of hidden/disabled ROMs.
 
 #### ScreenScraper Credentials
 
@@ -140,6 +154,16 @@ By default, **Custom/Homebrew** (`cus`) is always appended as a last resort if n
 
 Use **X** to reorder, **START** to save.
 
+#### Manual Download Directory
+
+Browse and select a directory where downloaded PDF manuals will be saved. You can create new directories from within the file picker. This must be set before downloading manuals — selecting **Manuals** from the main menu without a directory set will show a reminder.
+
+Example path: `/mnt/SDCARD/Manuals`
+
+| Option | Default |
+|--------|---------|
+| Manual download directory | **(not set)** |
+
 #### Show hidden/disabled ROMs
 
 When **Off** (default), the ROM and console pickers hide:
@@ -166,6 +190,15 @@ When scraping artwork, each ROM is identified through a two-step lookup against 
 If neither method finds a match, the ROM is counted as "Not Found" in the summary.
 
 Once a game is identified, ScrapeGoat picks the best artwork using your **Artwork Priority** list (e.g. Box art 2D → Box art 3D → Mix → Screenshots) and **Region Priority** list (e.g. USA → Europe → Japan → World). It tries each artwork type in order, and for each type tries your preferred regions first.
+
+### Manuals (ScreenScraper)
+
+Manual downloads use the same two-step ROM identification as artwork:
+
+1. **MD5 hash match** — Most accurate, identifies the exact ROM dump
+2. **Filename fallback** — Retries using the ROM filename if the hash lookup fails
+
+Once a game is identified, ScrapeGoat looks for a manual (`manuel` media type in the ScreenScraper API) using your **Region Priority** list. Manuals are downloaded as PDF files — no image conversion is performed. Not all games have manuals available in the ScreenScraper database.
 
 ### Cheats (Libretro)
 
@@ -226,6 +259,22 @@ Downloaded cheats are organized by system:
 ```
 
 Cheat files are matched to your ROMs by normalized game name. If a cheat file already exists on your device, it is skipped (not re-downloaded).
+
+## Manual Storage
+
+Downloaded manuals are saved as PDF files in your configured download directory, organized by system tag:
+
+```
+/mnt/SDCARD/Manuals/
+  GBA/
+    Pokemon Emerald.pdf
+    Pokemon FireRed.pdf
+    ...
+  GBC/
+    ...
+```
+
+The download directory is configurable via **Settings → Manual download directory**. System subdirectories are created automatically.
 
 ## Credentials
 

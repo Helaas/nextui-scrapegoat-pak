@@ -30,7 +30,7 @@
 
 /* ── Forward declarations ─────────────────────────────────── */
 
-typedef enum { LIB_MODE_ART, LIB_MODE_CHEAT } library_mode;
+typedef enum { LIB_MODE_ART, LIB_MODE_CHEAT, LIB_MODE_MANUAL } library_mode;
 
 static bool show_rom_list_screen(const console_dir *console,
                                   const app_settings *settings,
@@ -209,11 +209,13 @@ typedef struct {
     int rom_count;
     int art_count;
     int cheat_count;
+    int manual_count;
     bool has_ss;      /* has ScreenScraper mapping */
     bool has_libretro; /* has libretro cheat directory */
 } system_stats;
 
-static system_stats compute_system_stats(const console_dir *console, bool show_hidden) {
+static system_stats compute_system_stats(const console_dir *console, bool show_hidden,
+                                          const char *manual_download_dir) {
     system_stats stats = {0};
     stats.has_ss = (ss_platform_id(console->tag) >= 0);
     stats.has_libretro = (libretro_dir(console->tag) != NULL);
@@ -231,6 +233,9 @@ static system_stats compute_system_stats(const console_dir *console, bool show_h
             stats.art_count++;
         if (stats.has_libretro && cheat_exists(console->tag, roms[i].display))
             stats.cheat_count++;
+        if (stats.has_ss && manual_download_dir && manual_download_dir[0] &&
+            manual_exists(manual_download_dir, console->tag, roms[i].display))
+            stats.manual_count++;
     }
 
     free(roms);
@@ -243,6 +248,7 @@ typedef enum {
     MAIN_QUIT = 0,
     MAIN_SCRAPE_ART,
     MAIN_DOWNLOAD_CHEATS,
+    MAIN_DOWNLOAD_MANUALS,
     MAIN_PROGRESS,
     MAIN_API_USAGE,
     MAIN_SETTINGS,
@@ -254,6 +260,7 @@ static main_action show_main_menu(void) {
     ap_list_item items[] = {
         {.label = "Artwork"},
         {.label = "Cheats"},
+        {.label = "Manuals"},
         {.label = g_progress_label},
         {.label = "API Usage"},
         {.label = "Settings"},
@@ -263,7 +270,7 @@ static main_action show_main_menu(void) {
         {AP_BTN_A, "SELECT", true},
     };
 
-    ap_list_opts opts = ap_list_default_opts("ScrapeGoat", items, 5);
+    ap_list_opts opts = ap_list_default_opts("ScrapeGoat", items, 6);
     opts.footer = footer;
     opts.footer_count = 2;
     opts.status_bar = &g_status_bar;
@@ -281,9 +288,10 @@ static main_action show_main_menu(void) {
     switch (result.selected_index) {
     case 0: return MAIN_SCRAPE_ART;
     case 1: return MAIN_DOWNLOAD_CHEATS;
-    case 2: return MAIN_PROGRESS;
-    case 3: return MAIN_API_USAGE;
-    case 4: return MAIN_SETTINGS;
+    case 2: return MAIN_DOWNLOAD_MANUALS;
+    case 3: return MAIN_PROGRESS;
+    case 4: return MAIN_API_USAGE;
+    case 5: return MAIN_SETTINGS;
     default: return MAIN_QUIT;
     }
 }
@@ -306,7 +314,8 @@ static const char *rom_filter_name(rom_filter f) {
 
 static const char *rom_status_label(const rom_file *rom,
                                      const console_dir *console,
-                                     library_mode mode) {
+                                     library_mode mode,
+                                     const app_settings *settings) {
     if (mode == LIB_MODE_ART) {
         queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_ARTWORK);
         if (qs >= QUEUE_IDLE && qs <= QUEUE_DOWNLOADING) {
@@ -318,7 +327,7 @@ static const char *rom_status_label(const rom_file *rom,
             }
         }
         return artwork_exists(rom->path, rom->display) ? "art" : NULL;
-    } else {
+    } else if (mode == LIB_MODE_CHEAT) {
         queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_CHEAT);
         if (qs >= QUEUE_IDLE && qs <= QUEUE_MATCHING) {
             switch (qs) {
@@ -329,6 +338,17 @@ static const char *rom_status_label(const rom_file *rom,
             }
         }
         return cheat_exists(console->tag, rom->display) ? "cht" : NULL;
+    } else {
+        queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_MANUAL);
+        if (qs >= QUEUE_IDLE && qs <= QUEUE_DOWNLOADING) {
+            switch (qs) {
+            case QUEUE_IDLE:        return "queued";
+            case QUEUE_SEARCHING:   return "searching";
+            case QUEUE_DOWNLOADING: return "downloading";
+            default:                return "queued";
+            }
+        }
+        return manual_exists(settings->manual_download_dir, console->tag, rom->display) ? "pdf" : NULL;
     }
 }
 
@@ -350,7 +370,9 @@ static bool show_rom_list_screen(const console_dir *console,
         for (int i = 0; i < rom_count; i++) {
             bool inst = (mode == LIB_MODE_ART)
                 ? artwork_exists(roms[i].path, roms[i].display)
-                : cheat_exists(console->tag, roms[i].display);
+                : (mode == LIB_MODE_CHEAT)
+                    ? cheat_exists(console->tag, roms[i].display)
+                    : manual_exists(settings->manual_download_dir, console->tag, roms[i].display);
             if (!inst) { has_missing = true; break; }
         }
         if (!has_missing) filter = ROM_FILTER_ALL;
@@ -367,7 +389,9 @@ static bool show_rom_list_screen(const console_dir *console,
         for (int i = 0; i < rom_count; i++) {
             installed[i] = (mode == LIB_MODE_ART)
                 ? artwork_exists(roms[i].path, roms[i].display)
-                : cheat_exists(console->tag, roms[i].display);
+                : (mode == LIB_MODE_CHEAT)
+                    ? cheat_exists(console->tag, roms[i].display)
+                    : manual_exists(settings->manual_download_dir, console->tag, roms[i].display);
         }
 
         /* Build filter map */
@@ -384,7 +408,7 @@ static bool show_rom_list_screen(const console_dir *console,
 
         for (int vi = 0; vi < visible_count; vi++) {
             int i = filter_map[vi];
-            const char *status = rom_status_label(&roms[i], console, mode);
+            const char *status = rom_status_label(&roms[i], console, mode, settings);
             bool is_inst = installed[i];
             snprintf(labels[vi], 512, "%s", roms[i].label[0] ? roms[i].label : roms[i].display);
             items[vi].label = labels[vi];
@@ -470,7 +494,9 @@ static bool show_rom_list_screen(const console_dir *console,
                 int ri = filter_map[vi];
                 bool is_inst = (mode == LIB_MODE_ART)
                     ? artwork_exists(roms[ri].path, roms[ri].display)
-                    : cheat_exists(console->tag, roms[ri].display);
+                    : (mode == LIB_MODE_CHEAT)
+                        ? cheat_exists(console->tag, roms[ri].display)
+                        : manual_exists(settings->manual_download_dir, console->tag, roms[ri].display);
                 if (is_inst) installed_count++;
             }
 
@@ -504,19 +530,25 @@ static bool show_rom_list_screen(const console_dir *console,
                 if (force) {
                     bool ok = (mode == LIB_MODE_ART)
                         ? queue_add_artwork_forced(&roms[ri], console)
-                        : queue_add_cheat_forced(&roms[ri], console);
+                        : (mode == LIB_MODE_CHEAT)
+                            ? queue_add_cheat_forced(&roms[ri], console)
+                            : queue_add_manual_forced(&roms[ri], console);
                     if (ok) added++;
                 } else {
                     bool ok = (mode == LIB_MODE_ART)
                         ? queue_add_artwork(&roms[ri], console)
-                        : queue_add_cheat(&roms[ri], console);
+                        : (mode == LIB_MODE_CHEAT)
+                            ? queue_add_cheat(&roms[ri], console)
+                            : queue_add_manual(&roms[ri], console);
                     if (ok) added++;
                 }
             }
 
             char msg[128];
-            snprintf(msg, sizeof(msg), "Queued %d ROMs for %s.", added,
-                     mode == LIB_MODE_ART ? "artwork" : "cheats");
+            const char *mode_name = (mode == LIB_MODE_ART) ? "artwork"
+                                   : (mode == LIB_MODE_CHEAT) ? "cheats"
+                                   : "manuals";
+            snprintf(msg, sizeof(msg), "Queued %d ROMs for %s.", added, mode_name);
             if (show_track_progress_prompt(msg)) {
                 free(filter_map);
                 free(roms);
@@ -538,18 +570,22 @@ static bool show_rom_detail_screen(const rom_file *rom,
                                     library_mode mode,
                                     const app_settings *settings) {
     bool is_art = (mode == LIB_MODE_ART);
+    bool is_cheat = (mode == LIB_MODE_CHEAT);
     bool is_installed = is_art
         ? artwork_exists(rom->path, rom->display)
-        : cheat_exists(console->tag, rom->display);
+        : is_cheat
+            ? cheat_exists(console->tag, rom->display)
+            : manual_exists(settings->manual_download_dir, console->tag, rom->display);
 
-    queue_item_status qs = is_art
-        ? queue_get_rom_status(rom->path, QUEUE_TYPE_ARTWORK)
-        : queue_get_rom_status(rom->path, QUEUE_TYPE_CHEAT);
+    queue_item_type qtype = is_art ? QUEUE_TYPE_ARTWORK
+                          : is_cheat ? QUEUE_TYPE_CHEAT
+                          : QUEUE_TYPE_MANUAL;
+    queue_item_status qs = queue_get_rom_status(rom->path, qtype);
     bool is_queued = (qs >= QUEUE_IDLE && qs <= QUEUE_MATCHING);
 
     const char *status_str;
     if (is_queued)
-        status_str = rom_status_label(rom, console, mode);
+        status_str = rom_status_label(rom, console, mode, settings);
     else if (is_installed)
         status_str = "Installed";
     else
@@ -567,7 +603,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
 
     /* Cheat list section — if cheat mode and installed */
     cheat_detail_section_data cheat_detail = {0};
-    if (!is_art && is_installed) {
+    if (is_cheat && is_installed) {
         char cheats_base[PATH_MAX];
         char cht_path[PATH_MAX];
         get_cheats_path(cheats_base, sizeof(cheats_base));
@@ -598,10 +634,11 @@ static bool show_rom_detail_screen(const rom_file *rom,
         section_count++;
     }
 
+    const char *type_str = is_art ? "Artwork" : is_cheat ? "Cheat" : "Manual";
     ap_detail_info_pair info_pairs[] = {
         {"Status", status_str},
         {"System", console->display},
-        {"Type",   is_art ? "Artwork" : "Cheat"},
+        {"Type",   type_str},
     };
     sections[section_count] = (ap_detail_section){
         .type = AP_SECTION_INFO,
@@ -641,16 +678,19 @@ static bool show_rom_detail_screen(const rom_file *rom,
     ap_detail_result result;
     ap_detail_screen(&opts, &result);
 
+    const char *mode_name = is_art ? "artwork" : is_cheat ? "cheats" : "manuals";
     if (result.action == AP_DETAIL_ACTION && !is_queued) {
         if (is_installed) {
             queue_set_settings(settings);
             if (is_art)
                 queue_add_artwork_forced(rom, console);
-            else
+            else if (is_cheat)
                 queue_add_cheat_forced(rom, console);
+            else
+                queue_add_manual_forced(rom, console);
             char msg[256];
             snprintf(msg, sizeof(msg), "Re-queued \"%s\" for %s.",
-                     rom->label[0] ? rom->label : rom->display, is_art ? "artwork" : "cheats");
+                     rom->label[0] ? rom->label : rom->display, mode_name);
             if (show_track_progress_prompt(msg)) {
                 free(sections);
                 free_cheat_detail_section_data(&cheat_detail);
@@ -661,12 +701,14 @@ static bool show_rom_detail_screen(const rom_file *rom,
             bool added;
             if (is_art)
                 added = queue_add_artwork(rom, console);
-            else
+            else if (is_cheat)
                 added = queue_add_cheat(rom, console);
+            else
+                added = queue_add_manual(rom, console);
             if (added) {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "Queued \"%s\" for %s.",
-                         rom->label[0] ? rom->label : rom->display, is_art ? "artwork" : "cheats");
+                         rom->label[0] ? rom->label : rom->display, mode_name);
                 if (show_track_progress_prompt(msg)) {
                     free(sections);
                     free_cheat_detail_section_data(&cheat_detail);
@@ -703,7 +745,8 @@ static bool show_library_screen(library_mode mode) {
     build_console_menu_names(consoles, console_count, names);
 
     for (int i = 0; i < console_count; i++)
-        stats[i] = compute_system_stats(&consoles[i], settings.show_hidden);
+        stats[i] = compute_system_stats(&consoles[i], settings.show_hidden,
+                                        settings.manual_download_dir);
 
     /* Filter consoles by mode and build visible list */
     int *visible_map = malloc(sizeof(int) * (size_t)console_count);
@@ -711,13 +754,17 @@ static bool show_library_screen(library_mode mode) {
     for (int i = 0; i < console_count; i++) {
         if (mode == LIB_MODE_ART && !stats[i].has_ss) continue;
         if (mode == LIB_MODE_CHEAT && !stats[i].has_libretro) continue;
+        if (mode == LIB_MODE_MANUAL && !stats[i].has_ss) continue;
         visible_map[visible_count++] = i;
     }
 
     if (visible_count <= 0) {
-        show_error(mode == LIB_MODE_ART
+        const char *err_msg = (mode == LIB_MODE_ART)
             ? "No systems with artwork support found."
-            : "No systems with cheat support found.");
+            : (mode == LIB_MODE_CHEAT)
+                ? "No systems with cheat support found."
+                : "No systems with manual support found.";
+        show_error(err_msg);
         free(visible_map);
         free(names);
         free(stats);
@@ -732,11 +779,15 @@ static bool show_library_screen(library_mode mode) {
     for (int vi = 0; vi < visible_count; vi++) {
         int i = visible_map[vi];
         snprintf(labels[vi], 512, "%s", names[i]);
-        int count = (mode == LIB_MODE_ART) ? stats[i].art_count : stats[i].cheat_count;
+        int count = (mode == LIB_MODE_ART) ? stats[i].art_count
+                  : (mode == LIB_MODE_CHEAT) ? stats[i].cheat_count
+                  : stats[i].manual_count;
         snprintf(meta[vi], 32, "%d / %d", count, stats[i].rom_count);
     }
 
-    const char *title = (mode == LIB_MODE_ART) ? "Artwork" : "Cheats";
+    const char *title = (mode == LIB_MODE_ART) ? "Artwork"
+                      : (mode == LIB_MODE_CHEAT) ? "Cheats"
+                      : "Manuals";
 
     int initial_idx = 0;
     int visible_start = 0;
@@ -866,6 +917,7 @@ static void show_item_detail(const queue_item *item) {
     bool is_error = (item->status == QUEUE_ERROR ||
                      item->status == QUEUE_NOT_FOUND);
     bool is_cheat = (item->type == QUEUE_TYPE_CHEAT);
+    bool is_art = (item->type == QUEUE_TYPE_ARTWORK);
 
     /* Error detail */
     cheat_detail_section_data cheat_detail = {0};
@@ -884,7 +936,7 @@ static void show_item_detail(const queue_item *item) {
                  cheats_base, item->system_tag, item->rom_display);
 
         load_cheat_detail_section(cht_path, &cheat_detail);
-    } else {
+    } else if (is_art) {
         /* Artwork: show the image */
         artwork_src_path(item->rom_path, item->rom_display,
                          art_path, sizeof(art_path));
@@ -903,7 +955,7 @@ static void show_item_detail(const queue_item *item) {
 
     int section_count = 0;
     const char *status_str = queue_status_text(item->status);
-    const char *type_str = is_cheat ? "Cheat" : "Artwork";
+    const char *type_str = is_art ? "Artwork" : is_cheat ? "Cheat" : "Manual";
     ap_detail_info_pair info_pairs[] = {
         {"Status", status_str},
         {"System", item->system_display},
@@ -918,10 +970,12 @@ static void show_item_detail(const queue_item *item) {
     section_count++;
 
     if (has_error) {
+        const char *not_found_msg = is_cheat
+            ? "Not found in libretro database"
+            : "Not found in ScreenScraper.fr database";
         const char *msg = item->error_msg[0] ? item->error_msg :
                           (item->status == QUEUE_NOT_FOUND
-                              ? (is_cheat ? "Not found in libretro database"
-                                          : "Not found in ScreenScraper.fr database")
+                              ? not_found_msg
                               : "An unknown error occurred");
         sections[section_count] = (ap_detail_section){
             .type = AP_SECTION_DESCRIPTION,
@@ -998,7 +1052,9 @@ static int progress_snapshot(ap_queue_item *buf, int max, void *userdata) {
         memset(&buf[i], 0, sizeof(buf[i]));
         snprintf(buf[i].title, sizeof(buf[i].title), "%s", items[i].rom_display);
 
-        const char *type_str = items[i].type == QUEUE_TYPE_ARTWORK ? "art" : "cht";
+        const char *type_str = items[i].type == QUEUE_TYPE_ARTWORK ? "art"
+                             : items[i].type == QUEUE_TYPE_CHEAT ? "cht"
+                             : "pdf";
         snprintf(buf[i].subtitle, sizeof(buf[i].subtitle), "%s  [%s]",
                  items[i].system_display, type_str);
 
@@ -1199,6 +1255,26 @@ static void edit_region_priority(app_settings *settings) {
 }
 
 /* ── Artwork options sub-menu ─────────────────────────────── */
+
+/* ── Manual download directory editor ─────────────────────── */
+
+static void edit_manual_download_dir(app_settings *settings) {
+    ap_file_picker_opts fp = ap_file_picker_default_opts(NULL);
+    fp.mode = AP_FILE_PICKER_DIRS;
+    fp.allow_create = true;
+    fp.status_bar = &g_status_bar;
+    if (settings->manual_download_dir[0])
+        fp.initial_path = settings->manual_download_dir;
+
+    ap_file_picker_result result;
+    int ret = ap_file_picker(&fp, &result);
+    if (ret != AP_OK)
+        return;
+
+    snprintf(settings->manual_download_dir, sizeof(settings->manual_download_dir),
+             "%s", result.path);
+    save_settings(settings);
+}
 
 static void edit_artwork_options(app_settings *settings) {
     for (;;) {
@@ -1462,22 +1538,32 @@ static void show_settings_screen(void) {
 
         const char *pass_display = settings.ss_password[0] ? "(set)" : "(not set)";
 
+        char manual_dir_display[260];
+        if (settings.manual_download_dir[0])
+            snprintf(manual_dir_display, sizeof(manual_dir_display),
+                     "%s", settings.manual_download_dir);
+        else
+            snprintf(manual_dir_display, sizeof(manual_dir_display), "(not set)");
+
         ap_option user_opt = {.label = user_display, .value = "edit"};
         ap_option pass_opt = {.label = pass_display, .value = "edit"};
         ap_option art_opt = {.label = "...", .value = "edit"};
+        ap_option manual_dir_opt = {.label = manual_dir_display, .value = "edit"};
         ap_option clear_opt = {.label = "...", .value = "clear"};
         ap_option hidden_opts[2] = {
             {.label = "Off", .value = "0"},
             {.label = "On", .value = "1"},
         };
 
-        ap_options_item items[5] = {
+        ap_options_item items[6] = {
             {.label = "Username", .type = AP_OPT_CLICKABLE,
              .options = &user_opt, .option_count = 1, .selected_option = 0},
             {.label = "Password", .type = AP_OPT_CLICKABLE,
              .options = &pass_opt, .option_count = 1, .selected_option = 0},
             {.label = "Artwork Options", .type = AP_OPT_CLICKABLE,
              .options = &art_opt, .option_count = 1, .selected_option = 0},
+            {.label = "Manual download directory", .type = AP_OPT_CLICKABLE,
+             .options = &manual_dir_opt, .option_count = 1, .selected_option = 0},
             {.label = "Clear cheat cache", .type = AP_OPT_CLICKABLE,
              .options = &clear_opt, .option_count = 1, .selected_option = 0},
             {.label = "Include hidden/disabled/empty ROMs", .type = AP_OPT_STANDARD,
@@ -1494,7 +1580,7 @@ static void show_settings_screen(void) {
         ap_options_list_opts opts = {
             .title = "Settings",
             .items = items,
-            .item_count = 5,
+            .item_count = 6,
             .footer = footer,
             .footer_count = 3,
             .confirm_button = AP_BTN_START,
@@ -1514,14 +1600,15 @@ static void show_settings_screen(void) {
             case 0: edit_username(&settings); break;
             case 1: edit_password(&settings); break;
             case 2: edit_artwork_options(&settings); break;
-            case 3: clear_cheat_cache(); break;
+            case 3: edit_manual_download_dir(&settings); break;
+            case 4: clear_cheat_cache(); break;
             }
             free_settings(&settings);
             continue;
         }
 
         /* START pressed: save show_hidden and exit */
-        settings.show_hidden = (result.items[4].selected_option == 1);
+        settings.show_hidden = (result.items[5].selected_option == 1);
         save_settings(&settings);
         queue_set_settings(&settings);
         free_settings(&settings);
@@ -1583,6 +1670,20 @@ void run_app(void) {
         case MAIN_DOWNLOAD_CHEATS:
             if (show_library_screen(LIB_MODE_CHEAT)) show_progress_screen();
             break;
+        case MAIN_DOWNLOAD_MANUALS: {
+            app_settings s = load_settings();
+            if (s.manual_download_dir[0] == '\0') {
+                show_warning("Manual download directory not set.\n\n"
+                             "Go to Settings and set a download\n"
+                             "directory for manuals.\n\n"
+                             "You'll also need a Pak like\n"
+                             "SDLReader to view downloaded PDFs.");
+            } else {
+                if (show_library_screen(LIB_MODE_MANUAL)) show_progress_screen();
+            }
+            free_settings(&s);
+            break;
+        }
         case MAIN_PROGRESS:        show_progress_screen(); break;
         case MAIN_API_USAGE:       show_api_usage_screen(); break;
         case MAIN_SETTINGS:        show_settings_screen(); break;

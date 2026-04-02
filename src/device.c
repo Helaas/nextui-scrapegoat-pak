@@ -577,6 +577,23 @@ void artwork_src_path(const char *rom_path, const char *display_name,
     snprintf(buf, buflen, "%s/.media/%s.png", dir, display_name);
 }
 
+/* ── Manual helpers ──────────────────────────────────────── */
+
+void manual_dest_path(const char *manual_download_dir, const char *system_tag,
+                      const char *display_name, char *buf, size_t buflen) {
+    snprintf(buf, buflen, "%s/%s/%s.pdf", manual_download_dir, system_tag, display_name);
+}
+
+bool manual_exists(const char *manual_download_dir, const char *system_tag,
+                   const char *display_name) {
+    if (!manual_download_dir || manual_download_dir[0] == '\0')
+        return false;
+    char path[PATH_MAX];
+    manual_dest_path(manual_download_dir, system_tag, display_name, path, sizeof(path));
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
 /* ── MD5 hashing ─────────────────────────────────────────── */
 
 static int find_primary_rom_file(const char *folder_path, bool is_cue,
@@ -851,6 +868,8 @@ app_settings load_settings(void) {
         snprintf(s.ss_password, sizeof(s.ss_password), "%s", item->valuestring);
     if ((item = cJSON_GetObjectItem(json, "show_hidden")) && cJSON_IsBool(item))
         s.show_hidden = cJSON_IsTrue(item);
+    if ((item = cJSON_GetObjectItem(json, "manual_download_dir")) && cJSON_IsString(item))
+        snprintf(s.manual_download_dir, sizeof(s.manual_download_dir), "%s", item->valuestring);
 
     /* Read artwork_priority array */
     cJSON *arr = cJSON_GetObjectItem(json, "artwork_priority");
@@ -906,6 +925,7 @@ int save_settings(const app_settings *s) {
     cJSON_AddStringToObject(json, "ss_username", s->ss_username);
     cJSON_AddStringToObject(json, "ss_password", s->ss_password);
     cJSON_AddBoolToObject(json, "show_hidden", s->show_hidden);
+    cJSON_AddStringToObject(json, "manual_download_dir", s->manual_download_dir);
 
     cJSON *art_arr = cJSON_AddArrayToObject(json, "artwork_priority");
     for (int i = 0; i < s->artwork_prio_count; i++)
