@@ -50,6 +50,10 @@ static ap_status_bar_opts g_status_bar = {
 
 static char g_progress_label[64];
 
+static bool is_flip_layout(void) {
+    return ap_get_screen_width() <= 640 && ap_get_screen_height() <= 480;
+}
+
 static void refresh_progress_label(void) {
     queue_stats s = queue_get_stats();
     if (s.total > 0) {
@@ -1960,19 +1964,27 @@ void run_app(void) {
 
                 if (action == QUIT_QUEUE_BACKGROUND) {
                     /* Performance warning */
+                    const char *warn_message = is_flip_layout()
+                        ? "Background scraping keeps running\n"
+                          "after ScrapeGoat closes.\n"
+                          "This may reduce game performance.\n"
+                          "Sleep pauses downloads.\n"
+                          "Power off stops them.\n"
+                          "Progress appears next time\n"
+                          "you open ScrapeGoat."
+                        : "Background scraping keeps running\n"
+                          "after ScrapeGoat closes.\n\n"
+                          "This may reduce game performance.\n\n"
+                          "Sleep pauses downloads.\n"
+                          "Power off stops them.\n\n"
+                          "Progress appears next time\n"
+                          "you open ScrapeGoat.";
                     ap_footer_item warn_footer[] = {
                         {AP_BTN_B, "CANCEL", false},
                         {AP_BTN_A, "CONTINUE", true},
                     };
                     ap_message_opts warn_opts = {
-                        .message = "Background scraping will continue\n"
-                                   "while you play games.\n\n"
-                                    "This may reduce game performance\n"
-                                   "due to CPU and network usage.\n\n"
-                                   "If the device sleeps, downloads pause.\n"
-                                   "If you power it off, they stop.\n\n"
-                                   "Progress will be shown next time\n"
-                                   "you open ScrapeGoat.",
+                        .message = warn_message,
                         .footer = warn_footer,
                         .footer_count = 2,
                     };
