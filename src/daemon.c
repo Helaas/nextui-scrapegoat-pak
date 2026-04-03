@@ -194,9 +194,13 @@ static int deserialize_queue(const char *path, queue_item *out, int max_items) {
 
     char *data = malloc((size_t)fsize + 1);
     if (!data) { fclose(f); return 0; }
-    fread(data, 1, (size_t)fsize, f);
-    data[fsize] = '\0';
+    size_t bytes_read = fread(data, 1, (size_t)fsize, f);
     fclose(f);
+    if (bytes_read != (size_t)fsize) {
+        free(data);
+        return 0;
+    }
+    data[bytes_read] = '\0';
 
     cJSON *arr = cJSON_Parse(data);
     free(data);
@@ -450,7 +454,11 @@ int daemon_launch(const queue_item *items, int count,
         return -1;
 
     pid_t pid = fork();
-    if (pid < 0) return -1;
+    if (pid < 0) {
+        close(ready_pipe[0]);
+        close(ready_pipe[1]);
+        return -1;
+    }
 
     if (pid > 0) {
         close(ready_pipe[1]);
@@ -616,24 +624,8 @@ int daemon_main(int ready_fd) {
 
     fprintf(stderr, "scrapegoat-daemon: loaded %d items\n", item_count);
 
-    /* Load settings */
-    char spath[PATH_MAX];
-    daemon_settings_path(spath, sizeof(spath));
-
-    /* We load settings from the daemon-specific copy. Since load_settings()
-     * reads from the app's normal settings path, we temporarily redirect
-     * by loading our daemon copy directly. */
+    /* Load the shared app settings. */
     app_settings settings = load_settings();
-    /* Try to load from daemon settings first (preferred) */
-    {
-        FILE *sf = fopen(spath, "rb");
-        if (sf) {
-            fclose(sf);
-            /* The daemon settings file uses the same format.
-             * For simplicity, we use the app's normal settings as loaded above
-             * since the daemon copy was saved from the same source. */
-        }
-    }
 
     /* Initialize queue and load items */
     queue_init();
@@ -648,6 +640,7 @@ int daemon_main(int ready_fd) {
 
     /* Poll loop: update state file + check for stop signal */
     daemon_command command = DAEMON_CMD_NONE;
+    queue_item *snap = calloc(QUEUE_MAX_ITEMS, sizeof(queue_item));
     while ((command = daemon_read_command()) == DAEMON_CMD_NONE) {
         queue_stats stats = queue_get_stats();
 
@@ -655,11 +648,9 @@ int daemon_main(int ready_fd) {
             break;
 
         /* Snapshot and write queue state to disk */
-        queue_item *snap = calloc(QUEUE_MAX_ITEMS, sizeof(queue_item));
         if (snap) {
             int n = queue_snapshot(snap, QUEUE_MAX_ITEMS);
             serialize_queue(qpath, snap, n);
-            free(snap);
         }
 
         /* Sleep 2 seconds between updates */
@@ -675,7 +666,6 @@ int daemon_main(int ready_fd) {
     /* Write final state */
     fprintf(stderr, "scrapegoat-daemon: shutting down\n");
 
-    queue_item *snap = calloc(QUEUE_MAX_ITEMS, sizeof(queue_item));
     if (command == DAEMON_CMD_STOP) {
         queue_cancel_all();
     }
@@ -687,8 +677,8 @@ int daemon_main(int ready_fd) {
         else
             n = queue_snapshot(snap, QUEUE_MAX_ITEMS);
         serialize_queue(qpath, snap, n);
-        free(snap);
     }
+    free(snap);
 
     queue_shutdown();
 

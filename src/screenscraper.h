@@ -87,7 +87,7 @@ run_result scrape_console(const console_dir *console, bool missing_only,
  * instead of SDL_image). Must be called before any downloads. */
 void ss_set_headless(bool headless);
 
-/* ── Error access ───────────────────────────────────────���─── */
+/* ── Error access ─────────────────────────────────────────── */
 
 /* Returns the last error message for the calling thread, or NULL. */
 const char *ss_get_last_error(void);

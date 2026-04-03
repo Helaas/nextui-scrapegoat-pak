@@ -638,7 +638,7 @@ int ss_download_media(const ss_client *client, const char *media_url,
         size_t png_size = 0;
         void *png_data = tdefl_write_image_to_png_file_in_memory(
             pixels, w, h, 4, &png_size);
-        free(pixels);
+        stbi_image_free(pixels);
         if (!png_data) {
             ss_set_last_error("PNG encoding failed (miniz)");
             return -1;
