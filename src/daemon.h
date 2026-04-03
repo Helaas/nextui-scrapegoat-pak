@@ -18,10 +18,9 @@ int daemon_read_queue(queue_item *out, int max_items, queue_stats *stats_out);
 
 /* ── Lifecycle ───────────────────────────────────────────── */
 
-/* Serialize queue state + settings to disk and fork a background daemon.
+/* Serialize queue state to disk and fork a background daemon.
  * Parent returns 0 on success, -1 on error. Child never returns. */
-int daemon_launch(const queue_item *items, int count,
-                  const app_settings *settings);
+int daemon_launch(const queue_item *items, int count);
 
 /* Ask the running daemon to shut down and cancel unfinished items. */
 bool daemon_request_stop(void);

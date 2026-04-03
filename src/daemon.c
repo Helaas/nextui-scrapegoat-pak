@@ -248,45 +248,6 @@ static int deserialize_queue(const char *path, queue_item *out, int max_items) {
 
 /* ── Settings serialization (daemon-specific path) ───────── */
 
-static int save_settings_to(const char *path, const app_settings *s) {
-    cJSON *json = cJSON_CreateObject();
-    if (!json) return -1;
-
-    cJSON_AddStringToObject(json, "ss_username", s->ss_username);
-    cJSON_AddStringToObject(json, "ss_password", s->ss_password);
-    cJSON_AddBoolToObject(json, "show_hidden", s->show_hidden);
-    cJSON_AddStringToObject(json, "manual_download_dir", s->manual_download_dir);
-
-    cJSON *art_arr = cJSON_AddArrayToObject(json, "artwork_priority");
-    for (int i = 0; i < s->artwork_prio_count; i++)
-        cJSON_AddItemToArray(art_arr, cJSON_CreateString(s->artwork_prio[i]));
-
-    cJSON *reg_arr = cJSON_AddArrayToObject(json, "region_priority");
-    for (int i = 0; i < s->region_prio_count; i++)
-        cJSON_AddItemToArray(reg_arr, cJSON_CreateString(s->region_prio[i]));
-
-    char *str = cJSON_Print(json);
-    cJSON_Delete(json);
-    if (!str) return -1;
-
-    char tmp[PATH_MAX];
-    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-
-    FILE *f = fopen(tmp, "w");
-    if (!f) { free(str); return -1; }
-    fputs(str, f);
-    fflush(f);
-    fsync(fileno(f));
-    fclose(f);
-    free(str);
-
-    if (rename(tmp, path) != 0) {
-        unlink(tmp);
-        return -1;
-    }
-    return 0;
-}
-
 /* ── Detection ───────────────────────────────────────────── */
 
 bool daemon_is_running(void) {
@@ -406,8 +367,7 @@ void daemon_cleanup_all(void) {
     unlink(path);
 }
 
-int daemon_launch(const queue_item *items, int count,
-                  const app_settings *settings) {
+int daemon_launch(const queue_item *items, int count) {
     char dir[PATH_MAX];
     daemon_dir(dir, sizeof(dir));
     mkdirs(dir);
@@ -416,12 +376,6 @@ int daemon_launch(const queue_item *items, int count,
     char qpath[PATH_MAX];
     daemon_queue_path(qpath, sizeof(qpath));
     if (serialize_queue(qpath, items, count) != 0)
-        return -1;
-
-    /* Serialize settings */
-    char spath[PATH_MAX];
-    daemon_settings_path(spath, sizeof(spath));
-    if (save_settings_to(spath, settings) != 0)
         return -1;
 
     /* Remove any stale control command */
@@ -482,7 +436,7 @@ int daemon_launch(const queue_item *items, int count,
     /* Redirect stdio to log file */
     char logpath[PATH_MAX];
     daemon_log_path(logpath, sizeof(logpath));
-    int logfd = open(logpath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int logfd = open(logpath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (logfd >= 0) {
         dup2(logfd, STDOUT_FILENO);
         dup2(logfd, STDERR_FILENO);
@@ -647,8 +601,8 @@ int daemon_main(int ready_fd) {
         if (stats.pending <= 0)
             break;
 
-        /* Snapshot and write queue state to disk */
-        if (snap) {
+        /* Snapshot and write queue state to disk when changed */
+        if (snap && queue_check_dirty()) {
             int n = queue_snapshot(snap, QUEUE_MAX_ITEMS);
             serialize_queue(qpath, snap, n);
         }

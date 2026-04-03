@@ -2011,9 +2011,7 @@ void run_app(void) {
                         return;
                     }
 
-                    app_settings s = load_settings();
-                    int launch_ret = daemon_launch(snapshot, snap_count, &s);
-                    free_settings(&s);
+                    int launch_ret = daemon_launch(snapshot, snap_count);
 
                     if (launch_ret != 0) {
                         daemon_cleanup_all();
