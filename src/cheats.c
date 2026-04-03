@@ -918,6 +918,13 @@ int build_cheat_list(const char *libretro_dir_name, cheat_list *list) {
     return 0;
 }
 
+static int is_device_specific_cheat(const char *path) {
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    return strstr(base, "(Game Genie)") != NULL ||
+           strstr(base, "(Action Replay)") != NULL;
+}
+
 const char *match_cheat(const char *rom_display, cheat_list *list,
                                char **region_prio, int region_count) {
     char normalized[256];
@@ -940,6 +947,8 @@ const char *match_cheat(const char *rom_display, cheat_list *list,
         int score = score_cheat_region(candidate->regions, candidate->region_count,
                                        rom_regions, rom_region_count,
                                        region_prio, region_count);
+        if (!is_device_specific_cheat(candidate->path))
+            score += 1;
         if (score > best_score) {
             best_score = score;
             best_path = candidate->path;

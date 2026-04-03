@@ -14,14 +14,30 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef SCRAPEGOAT_HEADLESS
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_surface.h>
+#endif
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_NO_STDIO
+#include "stb_image.h"
+#include "miniz.h"
 
 /* Suppress GCC warnings about snprintf truncation when combining
    PATH_MAX-sized strings — truncation is safe by design. */
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 #endif
+
+/* ── Headless mode flag ──────────────────────────────────── */
+
+static bool g_headless = false;
+
+void ss_set_headless(bool headless) {
+    g_headless = headless;
+}
 
 /* ── Credentials ──────────────────────────────────────────── */
 
@@ -607,7 +623,46 @@ int ss_download_media(const ss_client *client, const char *media_url,
 
     bool is_jpeg = strstr(content_type, "jpeg") != NULL || url_has_jpeg_suffix(media_url);
 
-    if (is_jpeg) {
+    if (is_jpeg && g_headless) {
+        /* Headless path: stb_image decode + miniz PNG encode */
+        int w, h, channels;
+        unsigned char *pixels = stbi_load_from_memory(
+            (unsigned char *)buf.data, (int)buf.size,
+            &w, &h, &channels, 4);  /* force RGBA */
+        free(buf.data);
+        if (!pixels) {
+            ss_set_last_error("JPEG decode failed (stb_image)");
+            return -1;
+        }
+
+        size_t png_size = 0;
+        void *png_data = tdefl_write_image_to_png_file_in_memory(
+            pixels, w, h, 4, &png_size);
+        stbi_image_free(pixels);
+        if (!png_data) {
+            ss_set_last_error("PNG encoding failed (miniz)");
+            return -1;
+        }
+
+        FILE *pf = fopen(tmp_path, "wb");
+        if (!pf) {
+            mz_free(png_data);
+            ss_set_last_error("Failed to create temporary media file");
+            return -1;
+        }
+        size_t written = fwrite(png_data, 1, png_size, pf);
+        int write_ok = (written == png_size);
+        int flush_ok = (fflush(pf) == 0);
+        int sync_ok = flush_ok && (fsync(fileno(pf)) == 0);
+        int close_ok = (fclose(pf) == 0);
+        mz_free(png_data);
+        if (!write_ok || !flush_ok || !sync_ok || !close_ok) {
+            unlink(tmp_path);
+            ss_set_last_error("Failed to write media file");
+            return -1;
+        }
+    } else if (is_jpeg) {
+#ifndef SCRAPEGOAT_HEADLESS
         SDL_RWops *rw = SDL_RWFromMem(buf.data, (int)buf.size);
         if (!rw) {
             free(buf.data);
@@ -630,6 +685,11 @@ int ss_download_media(const ss_client *client, const char *media_url,
         }
 
         SDL_FreeSurface(surface);
+#else
+        free(buf.data);
+        ss_set_last_error("JPEG conversion not available in headless build");
+        return -1;
+#endif
     } else {
         FILE *f = fopen(tmp_path, "wb");
         if (!f) {

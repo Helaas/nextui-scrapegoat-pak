@@ -127,6 +127,14 @@ bool queue_invalidate_cheat_repo_state(void);
 /* Copy current queue items into caller-provided array. Returns count. */
 int queue_snapshot(queue_item *out, int max_items);
 
+/* Stop active workers without cancelling queue items, reset unfinished work to
+ * IDLE, and copy the full queue into caller-provided array. Returns count. */
+int queue_handoff_snapshot(queue_item *out, int max_items);
+
+/* Bulk-load items into the queue (for daemon startup / reconnect).
+ * Non-terminal items are reset to IDLE. Returns count loaded. */
+int queue_load_items(const queue_item *items, int count);
+
 /* Thread-safe settings update for the worker. */
 void queue_set_settings(const app_settings *settings);
 

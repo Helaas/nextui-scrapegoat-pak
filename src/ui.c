@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "cheats.h"
+#include "daemon.h"
 #include "device.h"
 #include "queue.h"
 #include "screenscraper.h"
@@ -48,6 +49,10 @@ static ap_status_bar_opts g_status_bar = {
 };
 
 static char g_progress_label[64];
+
+static bool is_flip_layout(void) {
+    return ap_get_screen_width() <= 640 && ap_get_screen_height() <= 480;
+}
 
 static void refresh_progress_label(void) {
     queue_stats s = queue_get_stats();
@@ -1133,6 +1138,45 @@ static void show_progress_screen(void) {
     ap_queue_viewer(&opts);
 }
 
+typedef enum {
+    QUIT_QUEUE_KEEP_OPEN = 0,
+    QUIT_QUEUE_EXIT_AND_CANCEL,
+    QUIT_QUEUE_BACKGROUND,
+} quit_queue_action;
+
+static quit_queue_action show_quit_queue_dialog(int pending_count) {
+    ap_list_item items[] = {
+        { .label = "Keep ScrapeGoat Open" },
+        { .label = "Exit and Cancel Downloads" },
+        { .label = "Exit to Background" },
+    };
+
+    char title[64];
+    snprintf(title, sizeof(title), "%d item%s still queued",
+             pending_count, pending_count == 1 ? "" : "s");
+
+    ap_footer_item footer[] = {
+        {AP_BTN_B, "KEEP OPEN", false},
+        {AP_BTN_A, "SELECT", true},
+    };
+
+    ap_list_opts opts = ap_list_default_opts(title, items, 3);
+    opts.footer = footer;
+    opts.footer_count = 2;
+    opts.status_bar = &g_status_bar;
+
+    ap_list_result result;
+    int ret = ap_list(&opts, &result);
+    if (ret == AP_CANCELLED || result.selected_index < 0)
+        return QUIT_QUEUE_KEEP_OPEN;
+
+    switch (result.selected_index) {
+    case 1: return QUIT_QUEUE_EXIT_AND_CANCEL;
+    case 2: return QUIT_QUEUE_BACKGROUND;
+    default: return QUIT_QUEUE_KEEP_OPEN;
+    }
+}
+
 /* ── Settings screen ──────────────────────────────────────── */
 
 static void edit_username(app_settings *settings) {
@@ -1646,10 +1690,231 @@ static bool has_default_route(void) {
 }
 #endif
 
+/* ── Daemon status screen ────────────────────────────────── */
+
+static int daemon_snapshot(ap_queue_item *buf, int max, void *userdata) {
+    (void)userdata;
+    int limit = max < QUEUE_MAX_ITEMS ? max : QUEUE_MAX_ITEMS;
+    queue_item *items = malloc(sizeof(queue_item) * (size_t)limit);
+    if (!items) return 0;
+
+    queue_stats stats;
+    int count = daemon_read_queue(items, limit, &stats);
+    if (count > limit) count = limit;
+
+    for (int i = 0; i < count; i++) {
+        memset(&buf[i], 0, sizeof(buf[i]));
+        snprintf(buf[i].title, sizeof(buf[i].title), "%s", items[i].rom_display);
+
+        const char *type_str = items[i].type == QUEUE_TYPE_ARTWORK ? "art"
+                             : items[i].type == QUEUE_TYPE_CHEAT ? "cht"
+                             : "pdf";
+        snprintf(buf[i].subtitle, sizeof(buf[i].subtitle), "%s  [%s]",
+                 items[i].system_display, type_str);
+
+        snprintf(buf[i].status_text, sizeof(buf[i].status_text), "%s",
+                 queue_status_text(items[i].status));
+
+        buf[i].status   = map_queue_status(items[i].status);
+        buf[i].progress = -1.0f;
+        buf[i].userdata = (void *)(uintptr_t)items[i].id;
+    }
+
+    free(items);
+    return count;
+}
+
+static bool wait_for_daemon_exit(int timeout_ms) {
+    int steps = timeout_ms / 100;
+    if (steps < 1)
+        steps = 1;
+
+    for (int i = 0; i < steps; i++) {
+        usleep(100000);
+        if (!daemon_is_running())
+            return true;
+    }
+    return !daemon_is_running();
+}
+
+static void daemon_on_stop(void *userdata) {
+    (void)userdata;
+    ap_footer_item cfooter[] = {
+        {AP_BTN_B, "NO",  false},
+        {AP_BTN_A, "YES", true},
+    };
+    ap_message_opts mopts = {
+        .message = "Stop background scraping?\n\n"
+                   "In-progress items will be stopped\n"
+                   "and pending items will be skipped.",
+        .footer = cfooter,
+        .footer_count = 2,
+    };
+    ap_confirm_result cres;
+    ap_confirmation(&mopts, &cres);
+    if (!cres.confirmed)
+        return;
+
+    if (!daemon_request_stop()) {
+        show_error("Failed to stop background scraping.");
+        return;
+    }
+
+    if (!wait_for_daemon_exit(10000))
+        show_error("Background scraping did not stop in time.");
+}
+
+static void show_daemon_status_screen(void) {
+    ap_queue_opts opts = {
+        .title         = "Background Scraping",
+        .snapshot      = daemon_snapshot,
+        .max_items     = QUEUE_MAX_ITEMS,
+        .status_bar    = &g_status_bar,
+        .userdata      = NULL,
+        .on_detail     = NULL,
+        .on_cancel     = daemon_on_stop,
+        .on_clear      = NULL,
+        .filter_labels = { "ALL", "BUSY", "DONE", "FAIL" },
+    };
+    ap_queue_viewer(&opts);
+}
+
+static bool restore_daemon_queue(bool show_progress_once,
+                                 const char *summary_label) {
+    queue_item *items = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
+    if (!items) {
+        show_error("Out of memory.");
+        return false;
+    }
+
+    queue_stats stats;
+    int count = daemon_read_queue(items, QUEUE_MAX_ITEMS, &stats);
+    if (count <= 0) {
+        free(items);
+        return false;
+    }
+
+    queue_load_items(items, count);
+    free(items);
+    daemon_cleanup_all();
+
+    if (show_progress_once || stats.pending > 0) {
+        show_progress_screen();
+        return true;
+    }
+
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+        "%s.\n\n%d done, %d failed out of %d total.",
+        summary_label, stats.done, stats.failed, stats.total);
+    show_brief(msg);
+    return true;
+}
+
+typedef struct {
+    float progress;
+    char  error[256];
+} daemon_takeover_ctx;
+
+static int daemon_takeover_worker(void *userdata) {
+    daemon_takeover_ctx *ctx = (daemon_takeover_ctx *)userdata;
+    if (!ctx)
+        return -1;
+
+    ctx->progress = 0.0f;
+    if (!daemon_request_handoff()) {
+        snprintf(ctx->error, sizeof(ctx->error),
+                 "Failed to request foreground takeover.");
+        return -1;
+    }
+
+    for (int i = 0; i < 100; i++) {
+        if (!daemon_is_running()) {
+            ctx->progress = 1.0f;
+            return 0;
+        }
+        ctx->progress = (float)(i + 1) / 100.0f;
+        usleep(100000);
+    }
+
+    if (daemon_is_running()) {
+        snprintf(ctx->error, sizeof(ctx->error),
+                 "Background scraping did not hand off in time.");
+        return -1;
+    }
+
+    ctx->progress = 1.0f;
+    return 0;
+}
+
+static bool check_daemon_on_startup(void) {
+    /* Reclaim background work immediately on relaunch. */
+    if (daemon_is_running()) {
+        daemon_takeover_ctx ctx = {0};
+        ap_process_opts opts = {
+            .message = "Resuming background scraping...",
+            .show_progress = true,
+            .progress = &ctx.progress,
+        };
+
+        if (ap_process_message(&opts, daemon_takeover_worker, &ctx) == 0) {
+            if (restore_daemon_queue(true, NULL))
+                return true;
+
+            show_error("Background scraping stopped, but the queue\n"
+                       "could not be restored.");
+            daemon_cleanup_all();
+            return true;
+        }
+
+        if (!daemon_is_running()) {
+            if (restore_daemon_queue(true, NULL))
+                return true;
+
+            show_error(ctx.error[0]
+                ? ctx.error
+                : "Background scraping stopped, but the queue\n"
+                  "could not be restored.");
+            daemon_cleanup_all();
+            return true;
+        }
+
+        show_daemon_status_screen();
+        if (!daemon_is_running()) {
+            if (restore_daemon_queue(true, NULL))
+                return true;
+
+            show_error("Background scraping stopped, but the queue\n"
+                       "could not be restored.");
+            daemon_cleanup_all();
+            return true;
+        }
+
+        show_warning("Background scraping is still active.\n\n"
+                     "Close ScrapeGoat and reopen it to retry\n"
+                     "foreground takeover.");
+        return false;
+    }
+
+    /* Check for a daemon that already finished while the app was closed. */
+    if (restore_daemon_queue(false, "Background scraping completed"))
+        return true;
+
+    return true;
+}
+
+/* ── App entry ───────────────────────────────────────────── */
+
 void run_app(void) {
     /* Load initial settings into queue */
     app_settings settings = load_settings();
     queue_set_settings(&settings);
+
+    /* Check for background daemon from previous session */
+    if (!check_daemon_on_startup()) {
+        free_settings(&settings);
+        return;
+    }
 
 #ifndef PLATFORM_MAC
     if (!has_default_route()) {
@@ -1694,24 +1959,92 @@ void run_app(void) {
         case MAIN_QUIT: {
             queue_stats stats = queue_get_stats();
             if (stats.pending > 0) {
-                char msg[256];
-                snprintf(msg, sizeof(msg),
-                    "%d items still in the queue.\n\n"
-                    "Exiting will cancel all remaining items.",
-                    stats.pending);
-                ap_footer_item footer[] = {
-                    {AP_BTN_B, "CANCEL", false},
-                    {AP_BTN_A, "EXIT", true},
-                };
-                ap_message_opts opts = {
-                    .message = msg,
-                    .footer = footer,
-                    .footer_count = 2,
-                };
-                ap_confirm_result confirm;
-                int ret = ap_confirmation(&opts, &confirm);
-                if (ret != AP_OK || !confirm.confirmed)
+                quit_queue_action action = show_quit_queue_dialog(stats.pending);
+                if (action == QUIT_QUEUE_KEEP_OPEN)
                     continue;
+
+                if (action == QUIT_QUEUE_BACKGROUND) {
+                    /* Performance warning */
+                    const char *warn_message = is_flip_layout()
+                        ? "Background scraping keeps running\n"
+                          "after ScrapeGoat closes.\n"
+                          "This may reduce game performance.\n"
+                          "Sleep pauses downloads.\n"
+                          "Power off stops them.\n"
+                          "Progress appears next time\n"
+                          "you open ScrapeGoat."
+                        : "Background scraping keeps running\n"
+                          "after ScrapeGoat closes.\n\n"
+                          "This may reduce game performance.\n\n"
+                          "Sleep pauses downloads.\n"
+                          "Power off stops them.\n\n"
+                          "Progress appears next time\n"
+                          "you open ScrapeGoat.";
+                    ap_footer_item warn_footer[] = {
+                        {AP_BTN_B, "CANCEL", false},
+                        {AP_BTN_A, "CONTINUE", true},
+                    };
+                    ap_message_opts warn_opts = {
+                        .message = warn_message,
+                        .footer = warn_footer,
+                        .footer_count = 2,
+                    };
+                    ap_confirm_result warn_confirm;
+                    int ret = ap_confirmation(&warn_opts, &warn_confirm);
+                    if (ret != AP_OK || !warn_confirm.confirmed)
+                        continue;
+
+                    /* Stop local workers and hand off the full queue state. */
+                    queue_item *snapshot = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
+                    if (!snapshot) {
+                        show_error("Out of memory.");
+                        continue;
+                    }
+                    int snap_count = queue_handoff_snapshot(snapshot, QUEUE_MAX_ITEMS);
+
+                    int pending_count = 0;
+                    for (int i = 0; i < snap_count; i++) {
+                        if (!is_item_terminal(snapshot[i].status))
+                            pending_count++;
+                    }
+                    if (pending_count <= 0) {
+                        free(snapshot);
+                        return;
+                    }
+
+                    int launch_ret = daemon_launch(snapshot, snap_count);
+
+                    if (launch_ret != 0) {
+                        daemon_cleanup_all();
+                        queue_load_items(snapshot, snap_count);
+                        free(snapshot);
+                        show_error("Failed to start background\n"
+                                   "scraping. Try exiting normally.");
+                        continue;
+                    }
+                    free(snapshot);
+                }
+
+                if (action == QUIT_QUEUE_EXIT_AND_CANCEL) {
+                    ap_footer_item exit_footer[] = {
+                        {AP_BTN_B, "KEEP OPEN", false},
+                        {AP_BTN_A, "EXIT", true},
+                    };
+                    ap_message_opts exit_opts = {
+                        .message = "Exit ScrapeGoat and cancel all downloads?\n\n"
+                                   "In-progress items will stop and queued items\n"
+                                   "will be skipped.",
+                        .footer = exit_footer,
+                        .footer_count = 2,
+                    };
+                    ap_confirm_result exit_confirm;
+                    int ret = ap_confirmation(&exit_opts, &exit_confirm);
+                    if (ret != AP_OK || !exit_confirm.confirmed)
+                        continue;
+
+                    queue_cancel_all();
+                }
+                /* Exit or Background (after daemon launched) */
             }
             return;
         }

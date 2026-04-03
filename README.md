@@ -21,6 +21,7 @@ A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and man
 - Choose to scrape **missing only** (skip games with existing artwork/manuals) or **all ROMs** (overwrite existing)
 - Downloads `.cht` cheat files from the Libretro cheat database for supported systems
 - Live progress tracking with thread count, ETA, and API quota display
+- Can hand an active queue to a background daemon on quit, then automatically resume it in the foreground when ScrapeGoat is reopened
 - Configurable artwork priority (20 media types available including covers, wheels, fan art, and more)
 - Configurable region priority (USA, Europe, Japan, France, Germany, Spain, Italy, Portugal, World, and more)
 - Supports 47 systems via ScreenScraper (33 bundled + 14 community paks, plus `P8` alias support for PICO-8 folders)
@@ -28,7 +29,7 @@ A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and man
 - Shows detailed scraping summary (Total / Found / Not Found / Errors)
 - Fully supports multi-disc games, CUE/BIN disc images, and zip-archived ROMs
 - Handles MD5 hashing with automatic fallback to filename-only matching
-- Interrupt at any time with a button press and install progress immediately
+- Lets you cancel in-progress work at any time without losing completed downloads
 
 ## Usage
 
@@ -39,6 +40,17 @@ A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and man
    - **Manuals** — Download PDF game manuals (requires a download directory to be set in Settings)
    - **Settings** — Configure credentials, artwork priority, region priority, and manual download directory
 3. Follow the on-screen prompts
+4. If you quit while a queue still has unfinished items, choose **Exit to Background** to keep it running after exit. Reopening **ScrapeGoat** automatically takes the queue back from the daemon and drops you into the normal **Progress** screen.
+
+## Background Handoff
+
+When you exit with pending work, ScrapeGoat offers three choices:
+
+- **Keep ScrapeGoat Open** — Cancel quitting and keep the queue running in the foreground
+- **Exit and Cancel Downloads** — Close the app immediately and abandon the remaining queue state
+- **Exit to Background** — Hand the full queue to a headless daemon and exit the app
+
+Background mode is an exit-time handoff, not a second long-lived session. The daemon keeps processing until it finishes, you stop it from the background status view, or you relaunch ScrapeGoat. On relaunch, the foreground app requests ownership back, the daemon writes a final queue snapshot and exits, and ScrapeGoat resumes the same queue locally with completed and failed items still visible.
 
 ## Menu Options
 
@@ -54,7 +66,7 @@ A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and man
    - **Threads** — How many parallel requests the API allows for your account
    - **ETA** — Estimated time to completion (exponential moving average)
    - **Quota** — Your daily API request usage (e.g. `90/20000`)
-5. **Stop or wait** — Press **Y** to stop early and install what's scraped so far, or wait for completion
+5. **Stop, background, or wait** — Press **Y** to stop early and keep completed items, or quit and choose **Exit to Background** to let the remaining queue continue after the app exits
 6. **Review summary** — See Total / Found / Not Found / Errors
 
 Supported systems for artwork (46 total):
@@ -84,7 +96,8 @@ Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA)
    - **Download missing only** — Skip games that already have a manual
    - **Re-download all** — Overwrite existing manuals
 4. **Watch the live download** — Same real-time progress as artwork scraping (threads, ETA, quota)
-5. **View manuals** — You'll need a PDF viewer Pak like **SDLReader** installed on your device to open the downloaded PDFs
+5. **Background or wait** — Quit and choose **Exit to Background** if you want the remaining manual queue to continue after exit
+6. **View manuals** — You'll need a PDF viewer Pak like **SDLReader** installed on your device to open the downloaded PDFs
 
 Manuals are region-aware and use the same **Region Priority** as artwork. The ScreenScraper API provides manuals for many (but not all) games — games without a manual are counted as "Not Found" in the summary.
 
@@ -222,6 +235,8 @@ ScrapeGoat still uses **exact normalized matching** after that indexing step. It
 3. **User's region priority** — If no direct match exists, your configured **Region Priority** (from Settings) is used as a tiebreaker.
 4. **No region tag** — Cheats without any region marker are used as a neutral fallback.
 
+Within each tier, **plain cheat files are preferred over device-specific variants** such as `(Game Genie)` and `(Action Replay)`. For example, if both `Super Mario Bros. (World).cht` and `Super Mario Bros. (World) (Game Genie).cht` exist, the plain file is always chosen.
+
 Region keywords are recognized from parenthetical groups in filenames: `USA`, `Europe`, `Japan`, `World`, `France`, `Germany`, `Spain`, `Italy`, `Portugal`, `Australia`, `Korea`, `China`, `Taiwan`, and their common abbreviations (`US`, `EU`, `JP`, `FR`, `DE`, etc.). Non-region tags like `(Code Breaker)`, `(SGB Enhanced)`, and `(Rev 1)` are ignored.
 
 For example, if you have `Pokemon - Emerald Version (USA, Europe).gba` and the Libretro database has both `Pokemon - Emerald Version (USA, Europe) (Code Breaker).cht` and `Pokemon - Feuerrote Edition (G).cht`, only the first matches (both normalize to `pokemon emerald version`). If there were a `(Japan)` variant too, the `(USA, Europe)` one would be selected because it directly overlaps with the ROM's regions.
@@ -315,7 +330,23 @@ Logs are written to:
 /mnt/SDCARD/.userdata/<platform>/logs/scrapegoat.log
 ```
 
-The platform is read from the `PLATFORM` environment variable. If not set, it defaults to `tg5040`. Logs include:
+When background mode is active, the daemon also writes to:
+
+```
+/mnt/SDCARD/.userdata/shared/ScrapeGoat/daemon/daemon.log
+```
+
+The platform is read from the `PLATFORM` environment variable. If not set, it defaults to `tg5040`.
+
+The background daemon keeps its runtime state under:
+
+```
+/mnt/SDCARD/.userdata/shared/ScrapeGoat/daemon/
+```
+
+This directory contains the daemon log plus internal queue, PID, lock, control, and settings files used for handoff and recovery.
+
+Logs include:
 - API requests and responses
 - Artwork/cheat downloads (success and errors)
 - Settings load/save operations
