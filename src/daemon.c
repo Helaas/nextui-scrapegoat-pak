@@ -641,15 +641,19 @@ int daemon_main(int ready_fd) {
         char tmp_path[PATH_MAX];
         daemon_control_path(tmp_path, sizeof(tmp_path));
         unlink(tmp_path); /* remove control command */
-
-        daemon_pid_path(tmp_path, sizeof(tmp_path));
-        unlink(tmp_path); /* remove PID file */
     }
 
-    /* Release and remove lock */
+    /* Release lock before removing PID file so daemon_is_running() cannot
+       return false while we still hold the lock. */
     flock(lock_fd, LOCK_UN);
     close(lock_fd);
     unlink(lock_path);
+
+    {
+        char tmp_path[PATH_MAX];
+        daemon_pid_path(tmp_path, sizeof(tmp_path));
+        unlink(tmp_path); /* remove PID file */
+    }
 
     fprintf(stderr, "scrapegoat-daemon: exited cleanly\n");
     return 0;

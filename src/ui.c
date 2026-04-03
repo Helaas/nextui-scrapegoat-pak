@@ -1694,12 +1694,13 @@ static bool has_default_route(void) {
 
 static int daemon_snapshot(ap_queue_item *buf, int max, void *userdata) {
     (void)userdata;
-    queue_item *items = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
+    int limit = max < QUEUE_MAX_ITEMS ? max : QUEUE_MAX_ITEMS;
+    queue_item *items = malloc(sizeof(queue_item) * (size_t)limit);
     if (!items) return 0;
 
     queue_stats stats;
-    int count = daemon_read_queue(items, QUEUE_MAX_ITEMS, &stats);
-    if (count > max) count = max;
+    int count = daemon_read_queue(items, limit, &stats);
+    if (count > limit) count = limit;
 
     for (int i = 0; i < count; i++) {
         memset(&buf[i], 0, sizeof(buf[i]));
