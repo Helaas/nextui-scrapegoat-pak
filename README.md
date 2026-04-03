@@ -40,15 +40,15 @@ A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and man
    - **Manuals** — Download PDF game manuals (requires a download directory to be set in Settings)
    - **Settings** — Configure credentials, artwork priority, region priority, and manual download directory
 3. Follow the on-screen prompts
-4. If you quit while a queue still has unfinished items, choose **Background** to keep it running after exit. Reopening **ScrapeGoat** automatically takes the queue back from the daemon and drops you into the normal **Progress** screen.
+4. If you quit while a queue still has unfinished items, choose **Exit to Background** to keep it running after exit. Reopening **ScrapeGoat** automatically takes the queue back from the daemon and drops you into the normal **Progress** screen.
 
 ## Background Handoff
 
 When you exit with pending work, ScrapeGoat offers three choices:
 
-- **Cancel** — Return to the app and keep the queue running in the foreground
-- **Exit** — Close the app immediately and abandon the remaining queue state
-- **Background** — Hand the full queue to a headless daemon and exit the app
+- **Keep ScrapeGoat Open** — Cancel quitting and keep the queue running in the foreground
+- **Exit and Cancel Downloads** — Close the app immediately and abandon the remaining queue state
+- **Exit to Background** — Hand the full queue to a headless daemon and exit the app
 
 Background mode is an exit-time handoff, not a second long-lived session. The daemon keeps processing until it finishes, you stop it from the background status view, or you relaunch ScrapeGoat. On relaunch, the foreground app requests ownership back, the daemon writes a final queue snapshot and exits, and ScrapeGoat resumes the same queue locally with completed and failed items still visible.
 
@@ -66,7 +66,7 @@ Background mode is an exit-time handoff, not a second long-lived session. The da
    - **Threads** — How many parallel requests the API allows for your account
    - **ETA** — Estimated time to completion (exponential moving average)
    - **Quota** — Your daily API request usage (e.g. `90/20000`)
-5. **Stop, background, or wait** — Press **Y** to stop early and keep completed items, or quit and choose **Background** to let the remaining queue continue after the app exits
+5. **Stop, background, or wait** — Press **Y** to stop early and keep completed items, or quit and choose **Exit to Background** to let the remaining queue continue after the app exits
 6. **Review summary** — See Total / Found / Not Found / Errors
 
 Supported systems for artwork (46 total):
@@ -96,7 +96,7 @@ Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA)
    - **Download missing only** — Skip games that already have a manual
    - **Re-download all** — Overwrite existing manuals
 4. **Watch the live download** — Same real-time progress as artwork scraping (threads, ETA, quota)
-5. **Background or wait** — Quit and choose **Background** if you want the remaining manual queue to continue after exit
+5. **Background or wait** — Quit and choose **Exit to Background** if you want the remaining manual queue to continue after exit
 6. **View manuals** — You'll need a PDF viewer Pak like **SDLReader** installed on your device to open the downloaded PDFs
 
 Manuals are region-aware and use the same **Region Priority** as artwork. The ScreenScraper API provides manuals for many (but not all) games — games without a manual are counted as "Not Found" in the summary.

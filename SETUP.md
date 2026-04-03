@@ -92,7 +92,7 @@ make package
 
 ### Background mode handoff
 
-If you quit ScrapeGoat with pending work and choose **Background**, the app writes the full queue to `~/.userdata/shared/ScrapeGoat/daemon/`, starts a headless daemon, and exits. When ScrapeGoat is launched again, the foreground app requests a handoff, the daemon persists a final queue snapshot and exits, and the queue resumes locally in the normal Progress screen with completed and failed entries preserved.
+If you quit ScrapeGoat with pending work and choose **Exit to Background**, the app writes the full queue to `~/.userdata/shared/ScrapeGoat/daemon/`, starts a headless daemon, and exits. When ScrapeGoat is launched again, the foreground app requests a handoff, the daemon persists a final queue snapshot and exits, and the queue resumes locally in the normal Progress screen with completed and failed entries preserved.
 
 ### Background daemon files
 

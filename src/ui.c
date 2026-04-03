@@ -1134,6 +1134,45 @@ static void show_progress_screen(void) {
     ap_queue_viewer(&opts);
 }
 
+typedef enum {
+    QUIT_QUEUE_KEEP_OPEN = 0,
+    QUIT_QUEUE_EXIT_AND_CANCEL,
+    QUIT_QUEUE_BACKGROUND,
+} quit_queue_action;
+
+static quit_queue_action show_quit_queue_dialog(int pending_count) {
+    ap_list_item items[] = {
+        { .label = "Keep ScrapeGoat Open" },
+        { .label = "Exit and Cancel Downloads" },
+        { .label = "Exit to Background" },
+    };
+
+    char title[64];
+    snprintf(title, sizeof(title), "%d item%s still queued",
+             pending_count, pending_count == 1 ? "" : "s");
+
+    ap_footer_item footer[] = {
+        {AP_BTN_B, "KEEP OPEN", false},
+        {AP_BTN_A, "SELECT", true},
+    };
+
+    ap_list_opts opts = ap_list_default_opts(title, items, 3);
+    opts.footer = footer;
+    opts.footer_count = 2;
+    opts.status_bar = &g_status_bar;
+
+    ap_list_result result;
+    int ret = ap_list(&opts, &result);
+    if (ret == AP_CANCELLED || result.selected_index < 0)
+        return QUIT_QUEUE_KEEP_OPEN;
+
+    switch (result.selected_index) {
+    case 1: return QUIT_QUEUE_EXIT_AND_CANCEL;
+    case 2: return QUIT_QUEUE_BACKGROUND;
+    default: return QUIT_QUEUE_KEEP_OPEN;
+    }
+}
+
 /* ── Settings screen ──────────────────────────────────────── */
 
 static void edit_username(app_settings *settings) {
@@ -1915,34 +1954,11 @@ void run_app(void) {
         case MAIN_QUIT: {
             queue_stats stats = queue_get_stats();
             if (stats.pending > 0) {
-                char msg[256];
-                snprintf(msg, sizeof(msg),
-                    "%d items still in the queue.\n\n"
-                    "Choose how to handle them:",
-                    stats.pending);
-
-                ap_selection_option options[] = {
-                    {"Cancel", "cancel"},
-                    {"Exit",   "exit"},
-                    {"Background", "bg"},
-                };
-                int option_count = 3;
-
-                ap_footer_item footer[] = {
-                    {AP_BTN_B, "BACK", false},
-                    {AP_BTN_A, "SELECT", true},
-                };
-
-                ap_selection_result sel;
-                int ret = ap_selection(msg, options, option_count,
-                                       footer, 2, &sel);
-                if (ret == AP_CANCELLED)
+                quit_queue_action action = show_quit_queue_dialog(stats.pending);
+                if (action == QUIT_QUEUE_KEEP_OPEN)
                     continue;
 
-                if (sel.selected_index == 0) /* Cancel */
-                    continue;
-
-                if (sel.selected_index == 2) { /* Background */
+                if (action == QUIT_QUEUE_BACKGROUND) {
                     /* Performance warning */
                     ap_footer_item warn_footer[] = {
                         {AP_BTN_B, "CANCEL", false},
@@ -1959,7 +1975,7 @@ void run_app(void) {
                         .footer_count = 2,
                     };
                     ap_confirm_result warn_confirm;
-                    ret = ap_confirmation(&warn_opts, &warn_confirm);
+                    int ret = ap_confirmation(&warn_opts, &warn_confirm);
                     if (ret != AP_OK || !warn_confirm.confirmed)
                         continue;
 
@@ -1994,6 +2010,26 @@ void run_app(void) {
                         continue;
                     }
                     free(snapshot);
+                }
+
+                if (action == QUIT_QUEUE_EXIT_AND_CANCEL) {
+                    ap_footer_item exit_footer[] = {
+                        {AP_BTN_B, "KEEP OPEN", false},
+                        {AP_BTN_A, "EXIT", true},
+                    };
+                    ap_message_opts exit_opts = {
+                        .message = "Exit ScrapeGoat and cancel all downloads?\n\n"
+                                   "In-progress items will stop and queued items\n"
+                                   "will be skipped.",
+                        .footer = exit_footer,
+                        .footer_count = 2,
+                    };
+                    ap_confirm_result exit_confirm;
+                    int ret = ap_confirmation(&exit_opts, &exit_confirm);
+                    if (ret != AP_OK || !exit_confirm.confirmed)
+                        continue;
+
+                    queue_cancel_all();
                 }
                 /* Exit or Background (after daemon launched) */
             }
