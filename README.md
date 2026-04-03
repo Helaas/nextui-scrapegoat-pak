@@ -235,6 +235,8 @@ ScrapeGoat still uses **exact normalized matching** after that indexing step. It
 3. **User's region priority** — If no direct match exists, your configured **Region Priority** (from Settings) is used as a tiebreaker.
 4. **No region tag** — Cheats without any region marker are used as a neutral fallback.
 
+Within each tier, **plain cheat files are preferred over device-specific variants** such as `(Game Genie)` and `(Action Replay)`. For example, if both `Super Mario Bros. (World).cht` and `Super Mario Bros. (World) (Game Genie).cht` exist, the plain file is always chosen.
+
 Region keywords are recognized from parenthetical groups in filenames: `USA`, `Europe`, `Japan`, `World`, `France`, `Germany`, `Spain`, `Italy`, `Portugal`, `Australia`, `Korea`, `China`, `Taiwan`, and their common abbreviations (`US`, `EU`, `JP`, `FR`, `DE`, etc.). Non-region tags like `(Code Breaker)`, `(SGB Enhanced)`, and `(Rev 1)` are ignored.
 
 For example, if you have `Pokemon - Emerald Version (USA, Europe).gba` and the Libretro database has both `Pokemon - Emerald Version (USA, Europe) (Code Breaker).cht` and `Pokemon - Feuerrote Edition (G).cht`, only the first matches (both normalize to `pokemon emerald version`). If there were a `(Japan)` variant too, the `(USA, Europe)` one would be selected because it directly overlaps with the ROM's regions.

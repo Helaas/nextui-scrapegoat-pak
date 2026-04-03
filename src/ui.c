@@ -1967,8 +1967,10 @@ void run_app(void) {
                     ap_message_opts warn_opts = {
                         .message = "Background scraping will continue\n"
                                    "while you play games.\n\n"
-                                   "This may reduce game performance\n"
+                                    "This may reduce game performance\n"
                                    "due to CPU and network usage.\n\n"
+                                   "If the device sleeps, downloads pause.\n"
+                                   "If you power it off, they stop.\n\n"
                                    "Progress will be shown next time\n"
                                    "you open ScrapeGoat.",
                         .footer = warn_footer,
