@@ -8,8 +8,8 @@
 /* ── Constants ────────────────────────────────────────────── */
 
 #define SS_API_BASE   "https://api.screenscraper.fr/api2"
-#define SS_SOFT_NAME  "ScrapeGoat-v2.0.0"
-#define SS_USER_AGENT "ScrapeGoat/2.0.0"
+#define SS_SOFT_NAME  "ScrapeGoat-v2.1.0"
+#define SS_USER_AGENT "ScrapeGoat/2.1.0"
 
 /* ── Build-time credentials ───────────────────────────────── */
 
