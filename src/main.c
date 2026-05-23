@@ -106,9 +106,25 @@ int main(int argc, char *argv[]) {
     }
 
     /* Bootstrap i18n: reads NextUI's language= from minuisettings.txt
-     * and loads /mnt/SDCARD/.system/res/lang/<code>.lang. Silent if
-     * the file is missing — T() returns the key unchanged in that case. */
-    I18N_init_from_minuisettings();
+     * and loads <sdcard>/.system/res/lang/<code>.lang. Honors the
+     * runtime SDCARD_PATH and the AP_MINUI_SETTINGS_PATH env var that
+     * the macOS preview setup uses, so previews pick up their cached
+     * settings file. Silent on failure — T() returns the key. */
+    {
+        char lang_dir[1024];
+        snprintf(lang_dir, sizeof(lang_dir), "%s/.system/res/lang", get_sdcard_path());
+
+        const char *env_settings = getenv("AP_MINUI_SETTINGS_PATH");
+        char settings_path[1024];
+        if (env_settings && env_settings[0]) {
+            snprintf(settings_path, sizeof(settings_path), "%s", env_settings);
+        } else {
+            snprintf(settings_path, sizeof(settings_path),
+                     "%s/.userdata/shared/minuisettings.txt", get_sdcard_path());
+        }
+        I18N_set_paths(lang_dir, settings_path);
+        I18N_init_from_minuisettings();
+    }
 
     queue_init();
     run_app();

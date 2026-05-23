@@ -30,6 +30,21 @@ static size_t     s_arena_used;
 static char       s_active_code[I18N_LANG_CODE_MAX];
 static int        s_inited;
 
+/* Path overrides — empty string means "use compile-time default". */
+static char       s_lang_dir[MAX_PATH];
+static char       s_settings_file[MAX_PATH];
+
+void I18N_set_paths(const char *lang_dir, const char *settings_file) {
+    if (lang_dir) {
+        strncpy(s_lang_dir, lang_dir, sizeof(s_lang_dir) - 1);
+        s_lang_dir[sizeof(s_lang_dir) - 1] = '\0';
+    }
+    if (settings_file) {
+        strncpy(s_settings_file, settings_file, sizeof(s_settings_file) - 1);
+        s_settings_file[sizeof(s_settings_file) - 1] = '\0';
+    }
+}
+
 static uint32_t fnv1a(const char *s) {
     uint32_t h = 0x811c9dc5u;
     while (*s) {
@@ -140,13 +155,14 @@ static int parse_file(const char *path) {
 static int load_lang(const char *lang_code) {
     table_clear();
 
+    const char *dir = s_lang_dir[0] ? s_lang_dir : SDCARD_PATH I18N_LANG_DIR;
+
     char path[MAX_PATH];
-    snprintf(path, sizeof(path), "%s/en.lang", SDCARD_PATH I18N_LANG_DIR);
+    snprintf(path, sizeof(path), "%s/en.lang", dir);
     parse_file(path);
 
     if (lang_code && *lang_code && strcmp(lang_code, "en") != 0) {
-        snprintf(path, sizeof(path), "%s/%s.lang",
-                 SDCARD_PATH I18N_LANG_DIR, lang_code);
+        snprintf(path, sizeof(path), "%s/%s.lang", dir, lang_code);
         parse_file(path);
     }
 
@@ -196,10 +212,17 @@ const char *I18N_active_code(void) {
 }
 
 /* Convenience wrapper used by main(): read language= from
- * NextUI's minuisettings.txt and bootstrap the table. */
+ * NextUI's minuisettings.txt and bootstrap the table.
+ * Honors I18N_set_paths() overrides so callers can point at a
+ * preview / test copy of the settings file. */
 void I18N_init_from_minuisettings(void) {
     char path[MAX_PATH];
-    snprintf(path, sizeof(path), "%s/.userdata/shared/minuisettings.txt", SDCARD_PATH);
+    if (s_settings_file[0]) {
+        strncpy(path, s_settings_file, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+    } else {
+        snprintf(path, sizeof(path), "%s/.userdata/shared/minuisettings.txt", SDCARD_PATH);
+    }
     char lang[I18N_LANG_CODE_MAX] = "en";
     FILE *f = fopen(path, "r");
     if (f) {
