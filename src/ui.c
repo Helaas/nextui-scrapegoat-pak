@@ -326,35 +326,35 @@ static const char *rom_status_label(const rom_file *rom,
         queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_ARTWORK);
         if (qs >= QUEUE_IDLE && qs <= QUEUE_DOWNLOADING) {
             switch (qs) {
-            case QUEUE_IDLE:        return "queued";
-            case QUEUE_SEARCHING:   return "searching";
-            case QUEUE_DOWNLOADING: return "downloading";
-            default:                return "queued";
+            case QUEUE_IDLE:        return T("sg.tag.queued");
+            case QUEUE_SEARCHING:   return T("sg.tag.searching");
+            case QUEUE_DOWNLOADING: return T("sg.tag.downloading");
+            default:                return T("sg.tag.queued");
             }
         }
-        return artwork_exists(rom->path, rom->display) ? "art" : NULL;
+        return artwork_exists(rom->path, rom->display) ? T("sg.tag.art") : NULL;
     } else if (mode == LIB_MODE_CHEAT) {
         queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_CHEAT);
         if (qs >= QUEUE_IDLE && qs <= QUEUE_MATCHING) {
             switch (qs) {
-            case QUEUE_IDLE:        return "queued";
-            case QUEUE_CLONING:     return "cloning";
-            case QUEUE_MATCHING:    return "matching";
-            default:                return "queued";
+            case QUEUE_IDLE:        return T("sg.tag.queued");
+            case QUEUE_CLONING:     return T("sg.tag.cloning");
+            case QUEUE_MATCHING:    return T("sg.tag.matching");
+            default:                return T("sg.tag.queued");
             }
         }
-        return cheat_exists(console->tag, rom->display) ? "cht" : NULL;
+        return cheat_exists(console->tag, rom->display) ? T("sg.tag.cht") : NULL;
     } else {
         queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_MANUAL);
         if (qs >= QUEUE_IDLE && qs <= QUEUE_DOWNLOADING) {
             switch (qs) {
-            case QUEUE_IDLE:        return "queued";
-            case QUEUE_SEARCHING:   return "searching";
-            case QUEUE_DOWNLOADING: return "downloading";
-            default:                return "queued";
+            case QUEUE_IDLE:        return T("sg.tag.queued");
+            case QUEUE_SEARCHING:   return T("sg.tag.searching");
+            case QUEUE_DOWNLOADING: return T("sg.tag.downloading");
+            default:                return T("sg.tag.queued");
             }
         }
-        return manual_exists(settings->manual_download_dir, console->tag, rom->display) ? "pdf" : NULL;
+        return manual_exists(settings->manual_download_dir, console->tag, rom->display) ? T("sg.tag.pdf") : NULL;
     }
 }
 
