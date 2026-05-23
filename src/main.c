@@ -11,6 +11,7 @@
 
 #include "daemon.h"
 #include "device.h"
+#include "i18n/i18n.h"
 #include "queue.h"
 #include "screenscraper.h"
 #include "ui.h"
@@ -103,6 +104,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "scrapegoat: failed to initialize UI\n");
         return 1;
     }
+
+    /* Bootstrap i18n: reads NextUI's language= from minuisettings.txt
+     * and loads /mnt/SDCARD/.system/res/lang/<code>.lang. Silent if
+     * the file is missing — T() returns the key unchanged in that case. */
+    I18N_init_from_minuisettings();
 
     queue_init();
     run_app();
