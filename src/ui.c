@@ -151,7 +151,7 @@ static bool load_cheat_detail_section(const char *cht_path,
         size_t line_len;
 
         if (!desc || !desc[0]) {
-            snprintf(fallback, sizeof(fallback), "Cheat %d", i + 1);
+            snprintf(fallback, sizeof(fallback), T("sg.cheat.fallback_name_fmt"), i + 1);
             desc = fallback;
         }
 
@@ -167,7 +167,7 @@ static bool load_cheat_detail_section(const char *cht_path,
     }
 
     cheat_desc_list_free(&descs);
-    snprintf(out->title, sizeof(out->title), "Cheats (%d)", out->count);
+    snprintf(out->title, sizeof(out->title), T("sg.cheat.list_title_fmt"), out->count);
     return true;
 }
 
@@ -204,7 +204,7 @@ static void build_console_menu_names(const console_dir *consoles, int count,
 
         if (consoles[i].is_disabled) {
             size_t len = strlen(names[i]);
-            snprintf(names[i] + len, 512 - len, " [disabled]");
+            snprintf(names[i] + len, 512 - len, " %s", T("sg.tag.disabled"));
         }
     }
 }
@@ -1410,7 +1410,7 @@ static int remove_path_recursive(const char *path, char *error, size_t error_len
     struct stat st;
     if (lstat(path, &st) != 0) {
         if (error && error_len > 0) {
-            snprintf(error, error_len, "Failed to inspect cache entry:\n%s",
+            snprintf(error, error_len, T("sg.error.cache_inspect_failed_fmt"),
                      strerror(errno));
         }
         return -1;
@@ -1420,7 +1420,7 @@ static int remove_path_recursive(const char *path, char *error, size_t error_len
         DIR *dir = opendir(path);
         if (!dir) {
             if (error && error_len > 0) {
-                snprintf(error, error_len, "Failed to open cache directory:\n%s",
+                snprintf(error, error_len, T("sg.error.cache_open_failed_fmt"),
                          strerror(errno));
             }
             return -1;
@@ -1442,7 +1442,7 @@ static int remove_path_recursive(const char *path, char *error, size_t error_len
 
         if (rmdir(path) != 0) {
             if (error && error_len > 0) {
-                snprintf(error, error_len, "Failed to remove cache directory:\n%s",
+                snprintf(error, error_len, T("sg.error.cache_rmdir_failed_fmt"),
                          strerror(errno));
             }
             return -1;
@@ -1452,7 +1452,7 @@ static int remove_path_recursive(const char *path, char *error, size_t error_len
 
     if (unlink(path) != 0) {
         if (error && error_len > 0) {
-            snprintf(error, error_len, "Failed to remove cache file:\n%s",
+            snprintf(error, error_len, T("sg.error.cache_unlink_failed_fmt"),
                      strerror(errno));
         }
         return -1;
@@ -1474,7 +1474,7 @@ static int clear_cache_worker(void *userdata) {
         if (errno != ENOENT) {
             if (ctx) {
                 snprintf(ctx->error, sizeof(ctx->error),
-                         "Failed to open cheat cache directory:\n%s",
+                         T("sg.error.cheat_cache_open_failed_fmt"),
                          strerror(errno));
             }
             return -1;
@@ -1498,7 +1498,7 @@ static int clear_cache_worker(void *userdata) {
         if (rmdir(repo) != 0 && errno != ENOENT) {
             if (ctx) {
                 snprintf(ctx->error, sizeof(ctx->error),
-                         "Failed to remove cheat cache directory:\n%s",
+                         T("sg.error.cheat_cache_rmdir_failed_fmt"),
                          strerror(errno));
             }
             return -1;
@@ -1526,7 +1526,7 @@ static int clear_cache_worker(void *userdata) {
     if (rmdir(repo) != 0 && errno != ENOENT) {
         if (ctx) {
             snprintf(ctx->error, sizeof(ctx->error),
-                     "Failed to remove cheat cache directory:\n%s",
+                     T("sg.error.cheat_cache_rmdir_failed_fmt"),
                      strerror(errno));
         }
         return -1;
