@@ -2,6 +2,7 @@
 #include "cheats.h"
 #include "daemon.h"
 #include "device.h"
+#include "i18n/i18n.h"
 #include "queue.h"
 #include "screenscraper.h"
 #include "systems.h"
@@ -60,14 +61,14 @@ static void refresh_progress_label(void) {
         int processed = s.done + s.failed;
         if (s.failed > 0)
             snprintf(g_progress_label, sizeof(g_progress_label),
-                     "Track Progress  (%d/%d, %d failed)",
+                     T("sg.progress.with_failed_fmt"),
                      processed, s.total, s.failed);
         else
             snprintf(g_progress_label, sizeof(g_progress_label),
-                     "Track Progress  (%d/%d)",
+                     T("sg.progress.with_total_fmt"),
                      processed, s.total);
     } else {
-        snprintf(g_progress_label, sizeof(g_progress_label), "Track Progress");
+        snprintf(g_progress_label, sizeof(g_progress_label), "%s", T("sg.progress.track"));
     }
 }
 
@@ -84,21 +85,21 @@ static Uint32 progress_label_timer_cb(Uint32 interval, void *param) {
 /* ── Helpers ──────────────────────────────────────────────── */
 
 static void show_error(const char *message) {
-    ap_footer_item footer[] = {{AP_BTN_B, "BACK", false}};
+    ap_footer_item footer[] = {{AP_BTN_B, T("sg.btn.back"), false}};
     ap_message_opts opts = {.message = message, .footer = footer, .footer_count = 1};
     ap_confirm_result result;
     ap_confirmation(&opts, &result);
 }
 
 static void show_warning(const char *message) {
-    ap_footer_item footer[] = {{AP_BTN_A, "CONTINUE", false}};
+    ap_footer_item footer[] = {{AP_BTN_A, T("sg.btn.continue"), false}};
     ap_message_opts opts = {.message = message, .footer = footer, .footer_count = 1};
     ap_confirm_result result;
     ap_confirmation(&opts, &result);
 }
 
 static void show_brief(const char *message) {
-    ap_footer_item footer[] = {{AP_BTN_A, "OK", true}};
+    ap_footer_item footer[] = {{AP_BTN_A, T("sg.btn.ok"), true}};
     ap_message_opts opts = {.message = message, .footer = footer, .footer_count = 1};
     ap_confirm_result result;
     ap_confirmation(&opts, &result);
@@ -150,7 +151,7 @@ static bool load_cheat_detail_section(const char *cht_path,
         size_t line_len;
 
         if (!desc || !desc[0]) {
-            snprintf(fallback, sizeof(fallback), "Cheat %d", i + 1);
+            snprintf(fallback, sizeof(fallback), T("sg.cheat.fallback_name_fmt"), i + 1);
             desc = fallback;
         }
 
@@ -166,15 +167,15 @@ static bool load_cheat_detail_section(const char *cht_path,
     }
 
     cheat_desc_list_free(&descs);
-    snprintf(out->title, sizeof(out->title), "Cheats (%d)", out->count);
+    snprintf(out->title, sizeof(out->title), T("sg.cheat.list_title_fmt"), out->count);
     return true;
 }
 
 /* Returns true if user chose "Track Progress". */
 static bool show_track_progress_prompt(const char *message) {
     ap_footer_item footer[] = {
-        {AP_BTN_B, "BACK",            false},
-        {AP_BTN_A, "TRACK PROGRESS", true},
+        {AP_BTN_B, T("sg.btn.back"),           false},
+        {AP_BTN_A, T("sg.btn.track_progress"), true},
     };
     ap_message_opts opts = {
         .message      = message,
@@ -203,7 +204,7 @@ static void build_console_menu_names(const console_dir *consoles, int count,
 
         if (consoles[i].is_disabled) {
             size_t len = strlen(names[i]);
-            snprintf(names[i] + len, 512 - len, " [disabled]");
+            snprintf(names[i] + len, 512 - len, " %s", T("sg.tag.disabled"));
         }
     }
 }
@@ -263,16 +264,16 @@ static main_action show_main_menu(void) {
     refresh_progress_label();
 
     ap_list_item items[] = {
-        {.label = "Artwork"},
-        {.label = "Cheats"},
-        {.label = "Manuals"},
+        {.label = T("sg.menu.artwork")},
+        {.label = T("sg.menu.cheats")},
+        {.label = T("sg.menu.manuals")},
         {.label = g_progress_label},
-        {.label = "Settings"},
-        {.label = "API Usage"},
+        {.label = T("sg.menu.settings")},
+        {.label = T("sg.menu.api_usage")},
     };
     ap_footer_item footer[] = {
-        {AP_BTN_B, "QUIT", false},
-        {AP_BTN_A, "SELECT", true},
+        {AP_BTN_B, T("sg.btn.quit"), false},
+        {AP_BTN_A, T("sg.btn.select"), true},
     };
 
     ap_list_opts opts = ap_list_default_opts("ScrapeGoat", items, 6);
@@ -311,9 +312,9 @@ typedef enum {
 
 static const char *rom_filter_name(rom_filter f) {
     switch (f) {
-    case ROM_FILTER_MISSING:   return "Missing";
-    case ROM_FILTER_INSTALLED: return "Installed";
-    default:                   return "All";
+    case ROM_FILTER_MISSING:   return T("sg.filter.missing");
+    case ROM_FILTER_INSTALLED: return T("sg.filter.installed");
+    default:                   return T("sg.filter.all");
     }
 }
 
@@ -325,35 +326,35 @@ static const char *rom_status_label(const rom_file *rom,
         queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_ARTWORK);
         if (qs >= QUEUE_IDLE && qs <= QUEUE_DOWNLOADING) {
             switch (qs) {
-            case QUEUE_IDLE:        return "queued";
-            case QUEUE_SEARCHING:   return "searching";
-            case QUEUE_DOWNLOADING: return "downloading";
-            default:                return "queued";
+            case QUEUE_IDLE:        return T("sg.tag.queued");
+            case QUEUE_SEARCHING:   return T("sg.tag.searching");
+            case QUEUE_DOWNLOADING: return T("sg.tag.downloading");
+            default:                return T("sg.tag.queued");
             }
         }
-        return artwork_exists(rom->path, rom->display) ? "art" : NULL;
+        return artwork_exists(rom->path, rom->display) ? T("sg.tag.art") : NULL;
     } else if (mode == LIB_MODE_CHEAT) {
         queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_CHEAT);
         if (qs >= QUEUE_IDLE && qs <= QUEUE_MATCHING) {
             switch (qs) {
-            case QUEUE_IDLE:        return "queued";
-            case QUEUE_CLONING:     return "cloning";
-            case QUEUE_MATCHING:    return "matching";
-            default:                return "queued";
+            case QUEUE_IDLE:        return T("sg.tag.queued");
+            case QUEUE_CLONING:     return T("sg.tag.cloning");
+            case QUEUE_MATCHING:    return T("sg.tag.matching");
+            default:                return T("sg.tag.queued");
             }
         }
-        return cheat_exists(console->tag, rom->display) ? "cht" : NULL;
+        return cheat_exists(console->tag, rom->display) ? T("sg.tag.cht") : NULL;
     } else {
         queue_item_status qs = queue_get_rom_status(rom->path, QUEUE_TYPE_MANUAL);
         if (qs >= QUEUE_IDLE && qs <= QUEUE_DOWNLOADING) {
             switch (qs) {
-            case QUEUE_IDLE:        return "queued";
-            case QUEUE_SEARCHING:   return "searching";
-            case QUEUE_DOWNLOADING: return "downloading";
-            default:                return "queued";
+            case QUEUE_IDLE:        return T("sg.tag.queued");
+            case QUEUE_SEARCHING:   return T("sg.tag.searching");
+            case QUEUE_DOWNLOADING: return T("sg.tag.downloading");
+            default:                return T("sg.tag.queued");
             }
         }
-        return manual_exists(settings->manual_download_dir, console->tag, rom->display) ? "pdf" : NULL;
+        return manual_exists(settings->manual_download_dir, console->tag, rom->display) ? T("sg.tag.pdf") : NULL;
     }
 }
 
@@ -363,7 +364,7 @@ static bool show_rom_list_screen(const console_dir *console,
     rom_file *roms = NULL;
     int rom_count = scan_roms(console->path, settings->show_hidden, &roms);
     if (rom_count <= 0) {
-        show_error("No ROMs found in this system.");
+        show_error(T("sg.error.no_roms"));
         free(roms);
         return false;
     }
@@ -433,15 +434,15 @@ static bool show_rom_list_screen(const console_dir *console,
         /* Footer: B position depends on screen width */
         ap_footer_item footer[4];
         if (ap_get_screen_width() >= 1024) {
-            footer[0] = (ap_footer_item){AP_BTN_B, "BACK",        false};
-            footer[1] = (ap_footer_item){AP_BTN_Y, "FILTER",      false};
-            footer[2] = (ap_footer_item){AP_BTN_X, "QUEUE ALL",   false};
+            footer[0] = (ap_footer_item){AP_BTN_B, T("sg.btn.back"),      false};
+            footer[1] = (ap_footer_item){AP_BTN_Y, T("sg.btn.filter"),    false};
+            footer[2] = (ap_footer_item){AP_BTN_X, T("sg.btn.queue_all"), false};
         } else {
-            footer[0] = (ap_footer_item){AP_BTN_Y, "FILTER",      false};
-            footer[1] = (ap_footer_item){AP_BTN_X, "QUEUE ALL",   false};
-            footer[2] = (ap_footer_item){AP_BTN_B, "BACK",        false};
+            footer[0] = (ap_footer_item){AP_BTN_Y, T("sg.btn.filter"),    false};
+            footer[1] = (ap_footer_item){AP_BTN_X, T("sg.btn.queue_all"), false};
+            footer[2] = (ap_footer_item){AP_BTN_B, T("sg.btn.back"),      false};
         }
-        footer[3] = (ap_footer_item){AP_BTN_A, "OPEN", true};
+        footer[3] = (ap_footer_item){AP_BTN_A, T("sg.btn.open"), true};
 
         ap_list_opts opts = ap_list_default_opts(title, items,
                                                   visible_count > 0 ? visible_count : 0);
@@ -508,16 +509,16 @@ static bool show_rom_list_screen(const console_dir *console,
             bool force = false;
             if (installed_count > 0) {
                 ap_list_item choices[] = {
-                    {.label = "Queue missing only"},
-                    {.label = "Re-download all (including installed)"},
+                    {.label = T("sg.queue_all.missing_only")},
+                    {.label = T("sg.queue_all.redownload_all")},
                 };
                 ap_footer_item cf[] = {
-                    {AP_BTN_B, "CANCEL", false},
-                    {AP_BTN_A, "SELECT", true},
+                    {AP_BTN_B, T("sg.btn.cancel"), false},
+                    {AP_BTN_A, T("sg.btn.select"), true},
                 };
                 char choice_title[64];
                 snprintf(choice_title, sizeof(choice_title),
-                         "%d already installed", installed_count);
+                         T("sg.queue_all.already_installed_fmt"), installed_count);
                 ap_list_opts copts = ap_list_default_opts(choice_title, choices, 2);
                 copts.footer       = cf;
                 copts.footer_count = 2;
@@ -550,10 +551,10 @@ static bool show_rom_list_screen(const console_dir *console,
             }
 
             char msg[128];
-            const char *mode_name = (mode == LIB_MODE_ART) ? "artwork"
-                                   : (mode == LIB_MODE_CHEAT) ? "cheats"
-                                   : "manuals";
-            snprintf(msg, sizeof(msg), "Queued %d ROMs for %s.", added, mode_name);
+            const char *mode_name = (mode == LIB_MODE_ART) ? T("sg.mode.artwork")
+                                   : (mode == LIB_MODE_CHEAT) ? T("sg.mode.cheats")
+                                   : T("sg.mode.manuals");
+            snprintf(msg, sizeof(msg), T("sg.queue.added_fmt"), added, mode_name);
             if (show_track_progress_prompt(msg)) {
                 free(filter_map);
                 free(roms);
@@ -592,10 +593,10 @@ static bool show_rom_detail_screen(const rom_file *rom,
     if (is_queued)
         status_str = rom_status_label(rom, console, mode, settings);
     else if (is_installed)
-        status_str = "Installed";
+        status_str = T("sg.filter.installed");
     else
-        status_str = "Missing";
-    if (!status_str) status_str = "Missing";
+        status_str = T("sg.filter.missing");
+    if (!status_str) status_str = T("sg.filter.missing");
 
     /* Image section — show artwork if present */
     char art_path[PATH_MAX] = {0};
@@ -623,7 +624,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
         calloc((size_t)(max_sections > 0 ? max_sections : 1), sizeof(*sections));
     if (!sections) {
         free_cheat_detail_section_data(&cheat_detail);
-        show_error("Out of memory.");
+        show_error(T("sg.error.oom"));
         return false;
     }
 
@@ -639,11 +640,11 @@ static bool show_rom_detail_screen(const rom_file *rom,
         section_count++;
     }
 
-    const char *type_str = is_art ? "Artwork" : is_cheat ? "Cheat" : "Manual";
+    const char *type_str = is_art ? T("sg.type.artwork") : is_cheat ? T("sg.type.cheat") : T("sg.type.manual");
     ap_detail_info_pair info_pairs[] = {
-        {"Status", status_str},
-        {"System", console->display},
-        {"Type",   type_str},
+        {T("sg.info.status"), status_str},
+        {T("sg.info.system"), console->display},
+        {T("sg.info.type"),   type_str},
     };
     sections[section_count] = (ap_detail_section){
         .type = AP_SECTION_INFO,
@@ -663,10 +664,10 @@ static bool show_rom_detail_screen(const rom_file *rom,
     }
 
     /* Footer: B=Back, A=Queue (or Re-download) */
-    const char *action_label = is_queued ? "QUEUED" :
-                               is_installed ? "RE-DOWNLOAD" : "QUEUE";
+    const char *action_label = is_queued ? T("sg.btn.queued") :
+                               is_installed ? T("sg.btn.redownload") : T("sg.btn.queue");
     ap_footer_item footer[] = {
-        {AP_BTN_B, "BACK",       false},
+        {AP_BTN_B, T("sg.btn.back"),       false},
         {AP_BTN_A, action_label, true},
     };
     int footer_count = is_queued ? 1 : 2; /* hide A if already queued */
@@ -683,7 +684,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
     ap_detail_result result;
     ap_detail_screen(&opts, &result);
 
-    const char *mode_name = is_art ? "artwork" : is_cheat ? "cheats" : "manuals";
+    const char *mode_name = is_art ? T("sg.mode.artwork") : is_cheat ? T("sg.mode.cheats") : T("sg.mode.manuals");
     if (result.action == AP_DETAIL_ACTION && !is_queued) {
         if (is_installed) {
             queue_set_settings(settings);
@@ -694,7 +695,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
             else
                 queue_add_manual_forced(rom, console);
             char msg[256];
-            snprintf(msg, sizeof(msg), "Re-queued \"%s\" for %s.",
+            snprintf(msg, sizeof(msg), T("sg.queue.requeued_fmt"),
                      rom->label[0] ? rom->label : rom->display, mode_name);
             if (show_track_progress_prompt(msg)) {
                 free(sections);
@@ -712,7 +713,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
                 added = queue_add_manual(rom, console);
             if (added) {
                 char msg[256];
-                snprintf(msg, sizeof(msg), "Queued \"%s\" for %s.",
+                snprintf(msg, sizeof(msg), T("sg.queue.queued_fmt"),
                          rom->label[0] ? rom->label : rom->display, mode_name);
                 if (show_track_progress_prompt(msg)) {
                     free(sections);
@@ -720,7 +721,7 @@ static bool show_rom_detail_screen(const rom_file *rom,
                     return true;
                 }
             } else {
-                show_brief("Already queued.");
+                show_brief(T("sg.queue.already_queued"));
             }
         }
     }
@@ -738,7 +739,7 @@ static bool show_library_screen(library_mode mode) {
     console_dir *consoles = NULL;
     int console_count = scan_console_dirs(settings.show_hidden, &consoles);
     if (console_count <= 0) {
-        show_error("No ROM folders found.");
+        show_error(T("sg.error.no_rom_folders"));
         free(consoles);
         free_settings(&settings);
         return false;
@@ -769,10 +770,10 @@ static bool show_library_screen(library_mode mode) {
 
     if (visible_count <= 0) {
         const char *err_msg = (mode == LIB_MODE_ART)
-            ? "No systems with artwork support found."
+            ? T("sg.error.no_systems_artwork")
             : (mode == LIB_MODE_CHEAT)
-                ? "No systems with cheat support found."
-                : "No systems with manual support found.";
+                ? T("sg.error.no_systems_cheat")
+                : T("sg.error.no_systems_manual");
         show_error(err_msg);
         free(visible_map);
         free(names);
@@ -794,9 +795,9 @@ static bool show_library_screen(library_mode mode) {
         snprintf(meta[vi], 32, "%d / %d", count, stats[i].rom_count);
     }
 
-    const char *title = (mode == LIB_MODE_ART) ? "Artwork"
-                      : (mode == LIB_MODE_CHEAT) ? "Cheats"
-                      : "Manuals";
+    const char *title = (mode == LIB_MODE_ART) ? T("sg.menu.artwork")
+                      : (mode == LIB_MODE_CHEAT) ? T("sg.menu.cheats")
+                      : T("sg.menu.manuals");
 
     int initial_idx = 0;
     int visible_start = 0;
@@ -809,8 +810,8 @@ static bool show_library_screen(library_mode mode) {
         }
 
         ap_footer_item footer[] = {
-            {AP_BTN_A, "OPEN", true},
-            {AP_BTN_B, "BACK", false},
+            {AP_BTN_A, T("sg.btn.open"), true},
+            {AP_BTN_B, T("sg.btn.back"), false},
         };
 
         ap_list_opts opts = ap_list_default_opts(title, items, visible_count);
@@ -862,7 +863,7 @@ static void show_api_usage_screen(void) {
     queue_api_stats api = queue_get_api_stats();
 
     if (api.max_requests <= 0) {
-        show_brief("No API data available yet.\n\nStats update after the first\nartwork search.");
+        show_brief(T("sg.brief.no_api_data"));
         return;
     }
 
@@ -873,10 +874,10 @@ static void show_api_usage_screen(void) {
     snprintf(threads,     sizeof(threads),     "%d", api.max_threads);
 
     ap_detail_info_pair info_pairs[] = {
-        {"Requests Today", req_today},
-        {"Daily Limit",    daily_limit},
-        {"Remaining",      remaining},
-        {"Threads",        threads},
+        {T("sg.api.requests_today"), req_today},
+        {T("sg.api.daily_limit"),    daily_limit},
+        {T("sg.api.remaining"),      remaining},
+        {T("sg.api.threads"),        threads},
     };
     ap_detail_section sections[] = {{
         .type       = AP_SECTION_INFO,
@@ -885,10 +886,10 @@ static void show_api_usage_screen(void) {
         .info_count = 4,
     }};
     ap_footer_item footer[] = {
-        {AP_BTN_B, "BACK", false},
+        {AP_BTN_B, T("sg.btn.back"), false},
     };
     ap_detail_opts opts = {
-        .title         = "API Usage",
+        .title         = T("sg.title.api_usage"),
         .sections      = sections,
         .section_count = 1,
         .footer        = footer,
@@ -904,15 +905,15 @@ static void show_api_usage_screen(void) {
 static const char *queue_status_text(queue_item_status status) {
     switch (status) {
     case QUEUE_NONE:        return "-";
-    case QUEUE_IDLE:        return "Queued";
-    case QUEUE_SEARCHING:   return "Searching...";
-    case QUEUE_DOWNLOADING: return "Downloading...";
-    case QUEUE_CLONING:     return "Cloning db...";
-    case QUEUE_MATCHING:    return "Matching...";
-    case QUEUE_DONE:        return "Done";
-    case QUEUE_NOT_FOUND:   return "Not Found";
-    case QUEUE_ERROR:       return "Error";
-    case QUEUE_SKIPPED:     return "Skipped";
+    case QUEUE_IDLE:        return T("sg.status.queued");
+    case QUEUE_SEARCHING:   return T("sg.status.searching");
+    case QUEUE_DOWNLOADING: return T("sg.status.downloading");
+    case QUEUE_CLONING:     return T("sg.status.cloning");
+    case QUEUE_MATCHING:    return T("sg.status.matching");
+    case QUEUE_DONE:        return T("sg.status.done");
+    case QUEUE_NOT_FOUND:   return T("sg.status.not_found");
+    case QUEUE_ERROR:       return T("sg.status.error");
+    case QUEUE_SKIPPED:     return T("sg.status.skipped");
     }
     return "?";
 }
@@ -958,17 +959,17 @@ static void show_item_detail(const queue_item *item) {
         calloc((size_t)(max_sections > 0 ? max_sections : 1), sizeof(*sections));
     if (!sections) {
         free_cheat_detail_section_data(&cheat_detail);
-        show_error("Out of memory.");
+        show_error(T("sg.error.oom"));
         return;
     }
 
     int section_count = 0;
     const char *status_str = queue_status_text(item->status);
-    const char *type_str = is_art ? "Artwork" : is_cheat ? "Cheat" : "Manual";
+    const char *type_str = is_art ? T("sg.type.artwork") : is_cheat ? T("sg.type.cheat") : T("sg.type.manual");
     ap_detail_info_pair info_pairs[] = {
-        {"Status", status_str},
-        {"System", item->system_display},
-        {"Type", type_str},
+        {T("sg.info.status"), status_str},
+        {T("sg.info.system"), item->system_display},
+        {T("sg.info.type"), type_str},
     };
     sections[section_count] = (ap_detail_section){
         .type = AP_SECTION_INFO,
@@ -980,15 +981,15 @@ static void show_item_detail(const queue_item *item) {
 
     if (has_error) {
         const char *not_found_msg = is_cheat
-            ? "Not found in libretro database"
-            : "Not found in ScreenScraper.fr database";
+            ? T("sg.error.not_found_libretro")
+            : T("sg.error.not_found_screenscraper");
         const char *msg = item->error_msg[0] ? item->error_msg :
                           (item->status == QUEUE_NOT_FOUND
                               ? not_found_msg
-                              : "An unknown error occurred");
+                              : T("sg.error.unknown"));
         sections[section_count] = (ap_detail_section){
             .type = AP_SECTION_DESCRIPTION,
-            .title = "Error",
+            .title = T("sg.title.error"),
             .description = msg,
         };
         section_count++;
@@ -1013,7 +1014,7 @@ static void show_item_detail(const queue_item *item) {
     }
 
     ap_footer_item footer[] = {
-        {AP_BTN_B, "BACK", false},
+        {AP_BTN_B, T("sg.btn.back"), false},
     };
 
     ap_detail_opts opts = {
@@ -1103,12 +1104,11 @@ static void progress_on_detail(const ap_queue_item *item, void *userdata) {
 static void progress_on_cancel(void *userdata) {
     (void)userdata;
     ap_footer_item cfooter[] = {
-        {AP_BTN_B, "NO",  false},
-        {AP_BTN_A, "YES", true},
+        {AP_BTN_B, T("sg.btn.no"),  false},
+        {AP_BTN_A, T("sg.btn.yes"), true},
     };
     ap_message_opts mopts = {
-        .message = "Cancel all downloads?\n\nIn-progress items will be stopped\n"
-                   "and pending items will be skipped.",
+        .message = T("sg.dialog.cancel_all"),
         .footer = cfooter,
         .footer_count = 2,
     };
@@ -1125,7 +1125,7 @@ static void progress_on_clear(void *userdata) {
 
 static void show_progress_screen(void) {
     ap_queue_opts opts = {
-        .title         = "Progress",
+        .title         = T("sg.title.progress"),
         .snapshot      = progress_snapshot,
         .max_items     = QUEUE_MAX_ITEMS,
         .status_bar    = &g_status_bar,
@@ -1133,7 +1133,10 @@ static void show_progress_screen(void) {
         .on_detail     = progress_on_detail,
         .on_cancel     = progress_on_cancel,
         .on_clear      = progress_on_clear,
-        .filter_labels = { "ALL", "BUSY", "DONE", "FAIL" },
+        .filter_labels = { T("sg.queue.filter.all"), T("sg.queue.filter.busy"),
+                           T("sg.queue.filter.done"), T("sg.queue.filter.fail") },
+        .empty_message        = T("sg.queue.empty"),
+        .empty_filter_message = T("sg.queue.empty_filter"),
     };
     ap_queue_viewer(&opts);
 }
@@ -1146,18 +1149,19 @@ typedef enum {
 
 static quit_queue_action show_quit_queue_dialog(int pending_count) {
     ap_list_item items[] = {
-        { .label = "Keep ScrapeGoat Open" },
-        { .label = "Exit and Cancel Downloads" },
-        { .label = "Exit to Background" },
+        { .label = T("sg.quit.keep_open") },
+        { .label = T("sg.quit.exit_cancel") },
+        { .label = T("sg.quit.exit_bg") },
     };
 
     char title[64];
-    snprintf(title, sizeof(title), "%d item%s still queued",
-             pending_count, pending_count == 1 ? "" : "s");
+    snprintf(title, sizeof(title),
+             pending_count == 1 ? T("sg.quit.title_one") : T("sg.quit.title_many_fmt"),
+             pending_count);
 
     ap_footer_item footer[] = {
-        {AP_BTN_B, "KEEP OPEN", false},
-        {AP_BTN_A, "SELECT", true},
+        {AP_BTN_B, T("sg.btn.keep_open"), false},
+        {AP_BTN_A, T("sg.btn.select"), true},
     };
 
     ap_list_opts opts = ap_list_default_opts(title, items, 3);
@@ -1212,12 +1216,12 @@ static void edit_artwork_priority(app_settings *settings) {
     }
 
     ap_footer_item footer[] = {
-        {AP_BTN_B, "CANCEL", false},
-        {AP_BTN_X, "REORDER", false},
-        {AP_BTN_START, "SAVE", true},
+        {AP_BTN_B, T("sg.btn.cancel"), false},
+        {AP_BTN_X, T("sg.btn.reorder"), false},
+        {AP_BTN_START, T("sg.btn.save"), true},
     };
 
-    ap_list_opts opts = ap_list_default_opts("Artwork Priority", items, count);
+    ap_list_opts opts = ap_list_default_opts(T("sg.title.artwork_priority"), items, count);
     opts.reorder_button = AP_BTN_X;
     opts.action_button = AP_BTN_START;
     opts.footer = footer;
@@ -1268,12 +1272,12 @@ static void edit_region_priority(app_settings *settings) {
     }
 
     ap_footer_item footer[] = {
-        {AP_BTN_B, "CANCEL", false},
-        {AP_BTN_X, "REORDER", false},
-        {AP_BTN_START, "SAVE", true},
+        {AP_BTN_B, T("sg.btn.cancel"), false},
+        {AP_BTN_X, T("sg.btn.reorder"), false},
+        {AP_BTN_START, T("sg.btn.save"), true},
     };
 
-    ap_list_opts opts = ap_list_default_opts("Region Priority", items, list_count);
+    ap_list_opts opts = ap_list_default_opts(T("sg.title.region_priority"), items, list_count);
     opts.reorder_button = AP_BTN_X;
     opts.action_button = AP_BTN_START;
     opts.footer = footer;
@@ -1351,20 +1355,20 @@ static void edit_artwork_options(app_settings *settings) {
         ap_option reg_opt = {.label = reg_summary, .value = "edit"};
 
         ap_options_item items[2] = {
-            {.label = "Artwork priority", .type = AP_OPT_CLICKABLE,
+            {.label = T("sg.settings.artwork_priority"), .type = AP_OPT_CLICKABLE,
              .options = &art_opt, .option_count = 1, .selected_option = 0},
-            {.label = "Region priority", .type = AP_OPT_CLICKABLE,
+            {.label = T("sg.settings.region_priority"), .type = AP_OPT_CLICKABLE,
              .options = &reg_opt, .option_count = 1, .selected_option = 0},
         };
 
         ap_footer_item footer[] = {
-            {AP_BTN_B, "BACK", false},
-            {AP_BTN_A, "EDIT", false},
-            {AP_BTN_START, "DONE", true},
+            {AP_BTN_B, T("sg.btn.back"), false},
+            {AP_BTN_A, T("sg.btn.edit"), false},
+            {AP_BTN_START, T("sg.btn.done"), true},
         };
 
         ap_options_list_opts opts = {
-            .title = "Artwork Options",
+            .title = T("sg.title.artwork_options"),
             .items = items,
             .item_count = 2,
             .footer = footer,
@@ -1406,7 +1410,7 @@ static int remove_path_recursive(const char *path, char *error, size_t error_len
     struct stat st;
     if (lstat(path, &st) != 0) {
         if (error && error_len > 0) {
-            snprintf(error, error_len, "Failed to inspect cache entry:\n%s",
+            snprintf(error, error_len, T("sg.error.cache_inspect_failed_fmt"),
                      strerror(errno));
         }
         return -1;
@@ -1416,7 +1420,7 @@ static int remove_path_recursive(const char *path, char *error, size_t error_len
         DIR *dir = opendir(path);
         if (!dir) {
             if (error && error_len > 0) {
-                snprintf(error, error_len, "Failed to open cache directory:\n%s",
+                snprintf(error, error_len, T("sg.error.cache_open_failed_fmt"),
                          strerror(errno));
             }
             return -1;
@@ -1438,7 +1442,7 @@ static int remove_path_recursive(const char *path, char *error, size_t error_len
 
         if (rmdir(path) != 0) {
             if (error && error_len > 0) {
-                snprintf(error, error_len, "Failed to remove cache directory:\n%s",
+                snprintf(error, error_len, T("sg.error.cache_rmdir_failed_fmt"),
                          strerror(errno));
             }
             return -1;
@@ -1448,7 +1452,7 @@ static int remove_path_recursive(const char *path, char *error, size_t error_len
 
     if (unlink(path) != 0) {
         if (error && error_len > 0) {
-            snprintf(error, error_len, "Failed to remove cache file:\n%s",
+            snprintf(error, error_len, T("sg.error.cache_unlink_failed_fmt"),
                      strerror(errno));
         }
         return -1;
@@ -1470,7 +1474,7 @@ static int clear_cache_worker(void *userdata) {
         if (errno != ENOENT) {
             if (ctx) {
                 snprintf(ctx->error, sizeof(ctx->error),
-                         "Failed to open cheat cache directory:\n%s",
+                         T("sg.error.cheat_cache_open_failed_fmt"),
                          strerror(errno));
             }
             return -1;
@@ -1494,7 +1498,7 @@ static int clear_cache_worker(void *userdata) {
         if (rmdir(repo) != 0 && errno != ENOENT) {
             if (ctx) {
                 snprintf(ctx->error, sizeof(ctx->error),
-                         "Failed to remove cheat cache directory:\n%s",
+                         T("sg.error.cheat_cache_rmdir_failed_fmt"),
                          strerror(errno));
             }
             return -1;
@@ -1522,7 +1526,7 @@ static int clear_cache_worker(void *userdata) {
     if (rmdir(repo) != 0 && errno != ENOENT) {
         if (ctx) {
             snprintf(ctx->error, sizeof(ctx->error),
-                     "Failed to remove cheat cache directory:\n%s",
+                     T("sg.error.cheat_cache_rmdir_failed_fmt"),
                      strerror(errno));
         }
         return -1;
@@ -1533,16 +1537,16 @@ static int clear_cache_worker(void *userdata) {
 
 static void clear_cheat_cache(void) {
     if (queue_is_active()) {
-        show_error("Wait for the queue to finish before clearing the cheat cache.");
+        show_error(T("sg.error.queue_active_clear"));
         return;
     }
 
     ap_footer_item footer[] = {
-        {AP_BTN_B, "CANCEL", false},
-        {AP_BTN_A, "CLEAR", true},
+        {AP_BTN_B, T("sg.btn.cancel"), false},
+        {AP_BTN_A, T("sg.btn.clear"), true},
     };
     ap_message_opts msg_opts = {
-        .message = "Clear the downloaded cheat database?\n\nThis deletes the local git checkout.\nIt will be re-downloaded on next use.",
+        .message = T("sg.dialog.clear_cheat_cache"),
         .footer = footer,
         .footer_count = 2,
     };
@@ -1554,21 +1558,19 @@ static void clear_cheat_cache(void) {
     float progress = 0.0f;
     clear_cache_ctx ctx = {.progress = &progress};
     ap_process_opts proc_opts = {
-        .message = "Clearing cheat cache...",
+        .message = T("sg.progress.clearing_cache"),
         .show_progress = true,
         .progress = &progress,
     };
     if (ap_process_message(&proc_opts, clear_cache_worker, &ctx) != 0) {
         show_error(ctx.error[0]
             ? ctx.error
-            : "Failed to clear the cheat cache.");
+            : T("sg.error.clear_failed"));
         return;
     }
 
     if (!queue_invalidate_cheat_repo_state()) {
-        show_error("Cheat cache was cleared, but the in-memory queue state\n"
-                   "could not be refreshed.\n\nRestart the app before downloading\n"
-                   "cheats again.");
+        show_error(T("sg.error.cache_cleared_stale"));
     }
 }
 
@@ -1582,16 +1584,16 @@ static void show_settings_screen(void) {
         if (settings.ss_username[0])
             snprintf(user_display, sizeof(user_display), "%s", settings.ss_username);
         else
-            snprintf(user_display, sizeof(user_display), "(not set)");
+            snprintf(user_display, sizeof(user_display), "%s", T("sg.value.not_set"));
 
-        const char *pass_display = settings.ss_password[0] ? "(set)" : "(not set)";
+        const char *pass_display = settings.ss_password[0] ? T("sg.value.set") : T("sg.value.not_set");
 
         char manual_dir_display[260];
         if (settings.manual_download_dir[0])
             snprintf(manual_dir_display, sizeof(manual_dir_display),
                      "%s", settings.manual_download_dir);
         else
-            snprintf(manual_dir_display, sizeof(manual_dir_display), "(not set)");
+            snprintf(manual_dir_display, sizeof(manual_dir_display), "%s", T("sg.value.not_set"));
 
         ap_option user_opt = {.label = user_display, .value = "edit"};
         ap_option pass_opt = {.label = pass_display, .value = "edit"};
@@ -1599,34 +1601,34 @@ static void show_settings_screen(void) {
         ap_option manual_dir_opt = {.label = manual_dir_display, .value = "edit"};
         ap_option clear_opt = {.label = "...", .value = "clear"};
         ap_option hidden_opts[2] = {
-            {.label = "Off", .value = "0"},
-            {.label = "On", .value = "1"},
+            {.label = T("sg.toggle.off"), .value = "0"},
+            {.label = T("sg.toggle.on"), .value = "1"},
         };
 
         ap_options_item items[6] = {
-            {.label = "Username", .type = AP_OPT_CLICKABLE,
+            {.label = T("sg.settings.username"), .type = AP_OPT_CLICKABLE,
              .options = &user_opt, .option_count = 1, .selected_option = 0},
-            {.label = "Password", .type = AP_OPT_CLICKABLE,
+            {.label = T("sg.settings.password"), .type = AP_OPT_CLICKABLE,
              .options = &pass_opt, .option_count = 1, .selected_option = 0},
-            {.label = "Artwork Options", .type = AP_OPT_CLICKABLE,
+            {.label = T("sg.settings.artwork_options"), .type = AP_OPT_CLICKABLE,
              .options = &art_opt, .option_count = 1, .selected_option = 0},
-            {.label = "Manual download directory", .type = AP_OPT_CLICKABLE,
+            {.label = T("sg.settings.manual_dir"), .type = AP_OPT_CLICKABLE,
              .options = &manual_dir_opt, .option_count = 1, .selected_option = 0},
-            {.label = "Clear cheat cache", .type = AP_OPT_CLICKABLE,
+            {.label = T("sg.settings.clear_cheat_cache"), .type = AP_OPT_CLICKABLE,
              .options = &clear_opt, .option_count = 1, .selected_option = 0},
-            {.label = "Include hidden/disabled/empty ROMs", .type = AP_OPT_STANDARD,
+            {.label = T("sg.settings.include_hidden"), .type = AP_OPT_STANDARD,
              .options = hidden_opts, .option_count = 2,
              .selected_option = settings.show_hidden ? 1 : 0},
         };
 
         ap_footer_item footer[] = {
-            {AP_BTN_B, "BACK", false},
-            {AP_BTN_A, "EDIT", false},
-            {AP_BTN_START, "SAVE", true},
+            {AP_BTN_B, T("sg.btn.back"), false},
+            {AP_BTN_A, T("sg.btn.edit"), false},
+            {AP_BTN_START, T("sg.btn.save"), true},
         };
 
         ap_options_list_opts opts = {
-            .title = "Settings",
+            .title = T("sg.title.settings"),
             .items = items,
             .item_count = 6,
             .footer = footer,
@@ -1740,13 +1742,11 @@ static bool wait_for_daemon_exit(int timeout_ms) {
 static void daemon_on_stop(void *userdata) {
     (void)userdata;
     ap_footer_item cfooter[] = {
-        {AP_BTN_B, "NO",  false},
-        {AP_BTN_A, "YES", true},
+        {AP_BTN_B, T("sg.btn.no"),  false},
+        {AP_BTN_A, T("sg.btn.yes"), true},
     };
     ap_message_opts mopts = {
-        .message = "Stop background scraping?\n\n"
-                   "In-progress items will be stopped\n"
-                   "and pending items will be skipped.",
+        .message = T("sg.dialog.stop_bg"),
         .footer = cfooter,
         .footer_count = 2,
     };
@@ -1756,17 +1756,17 @@ static void daemon_on_stop(void *userdata) {
         return;
 
     if (!daemon_request_stop()) {
-        show_error("Failed to stop background scraping.");
+        show_error(T("sg.error.bg_stop_failed"));
         return;
     }
 
     if (!wait_for_daemon_exit(10000))
-        show_error("Background scraping did not stop in time.");
+        show_error(T("sg.error.bg_stop_timeout"));
 }
 
 static void show_daemon_status_screen(void) {
     ap_queue_opts opts = {
-        .title         = "Background Scraping",
+        .title         = T("sg.title.bg_scraping"),
         .snapshot      = daemon_snapshot,
         .max_items     = QUEUE_MAX_ITEMS,
         .status_bar    = &g_status_bar,
@@ -1774,7 +1774,10 @@ static void show_daemon_status_screen(void) {
         .on_detail     = NULL,
         .on_cancel     = daemon_on_stop,
         .on_clear      = NULL,
-        .filter_labels = { "ALL", "BUSY", "DONE", "FAIL" },
+        .filter_labels = { T("sg.queue.filter.all"), T("sg.queue.filter.busy"),
+                           T("sg.queue.filter.done"), T("sg.queue.filter.fail") },
+        .empty_message        = T("sg.queue.empty"),
+        .empty_filter_message = T("sg.queue.empty_filter"),
     };
     ap_queue_viewer(&opts);
 }
@@ -1783,7 +1786,7 @@ static bool restore_daemon_queue(bool show_progress_once,
                                  const char *summary_label) {
     queue_item *items = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
     if (!items) {
-        show_error("Out of memory.");
+        show_error(T("sg.error.oom"));
         return false;
     }
 
@@ -1804,8 +1807,7 @@ static bool restore_daemon_queue(bool show_progress_once,
     }
 
     char msg[256];
-    snprintf(msg, sizeof(msg),
-        "%s.\n\n%d done, %d failed out of %d total.",
+    snprintf(msg, sizeof(msg), T("sg.daemon.summary_fmt"),
         summary_label, stats.done, stats.failed, stats.total);
     show_brief(msg);
     return true;
@@ -1823,8 +1825,8 @@ static int daemon_takeover_worker(void *userdata) {
 
     ctx->progress = 0.0f;
     if (!daemon_request_handoff()) {
-        snprintf(ctx->error, sizeof(ctx->error),
-                 "Failed to request foreground takeover.");
+        snprintf(ctx->error, sizeof(ctx->error), "%s",
+                 T("sg.error.handoff_failed"));
         return -1;
     }
 
@@ -1838,8 +1840,8 @@ static int daemon_takeover_worker(void *userdata) {
     }
 
     if (daemon_is_running()) {
-        snprintf(ctx->error, sizeof(ctx->error),
-                 "Background scraping did not hand off in time.");
+        snprintf(ctx->error, sizeof(ctx->error), "%s",
+                 T("sg.error.handoff_timeout"));
         return -1;
     }
 
@@ -1852,7 +1854,7 @@ static bool check_daemon_on_startup(void) {
     if (daemon_is_running()) {
         daemon_takeover_ctx ctx = {0};
         ap_process_opts opts = {
-            .message = "Resuming background scraping...",
+            .message = T("sg.daemon.resuming"),
             .show_progress = true,
             .progress = &ctx.progress,
         };
@@ -1861,8 +1863,7 @@ static bool check_daemon_on_startup(void) {
             if (restore_daemon_queue(true, NULL))
                 return true;
 
-            show_error("Background scraping stopped, but the queue\n"
-                       "could not be restored.");
+            show_error(T("sg.error.bg_queue_lost"));
             daemon_cleanup_all();
             return true;
         }
@@ -1873,8 +1874,7 @@ static bool check_daemon_on_startup(void) {
 
             show_error(ctx.error[0]
                 ? ctx.error
-                : "Background scraping stopped, but the queue\n"
-                  "could not be restored.");
+                : T("sg.error.bg_queue_lost"));
             daemon_cleanup_all();
             return true;
         }
@@ -1884,20 +1884,17 @@ static bool check_daemon_on_startup(void) {
             if (restore_daemon_queue(true, NULL))
                 return true;
 
-            show_error("Background scraping stopped, but the queue\n"
-                       "could not be restored.");
+            show_error(T("sg.error.bg_queue_lost"));
             daemon_cleanup_all();
             return true;
         }
 
-        show_warning("Background scraping is still active.\n\n"
-                     "Close ScrapeGoat and reopen it to retry\n"
-                     "foreground takeover.");
+        show_warning(T("sg.warn.bg_still_active"));
         return false;
     }
 
     /* Check for a daemon that already finished while the app was closed. */
-    if (restore_daemon_queue(false, "Background scraping completed"))
+    if (restore_daemon_queue(false, T("sg.daemon.completed_label")))
         return true;
 
     return true;
@@ -1918,15 +1915,11 @@ void run_app(void) {
 
 #ifndef PLATFORM_MAC
     if (!has_default_route()) {
-        show_warning("No internet connection detected.\n\n"
-                     "Previously downloaded cheats can\n"
-                     "still be used offline.\n\n"
-                     "Connect to wifi to scrape artwork/\n"
-                     "manuals or download new cheats.");
+        show_warning(T("sg.warn.no_internet"));
     } else
 #endif
     if (settings.ss_username[0] == '\0') {
-        show_warning("No ScreenScraper.fr user credentials set.\n\nScraping will proceed at basic rate\n(~1 req/min, single-threaded).\n\nFor much faster speeds, go to Settings\nand add your username and password.");
+        show_warning(T("sg.warn.no_credentials"));
     }
     free_settings(&settings);
 
@@ -1942,11 +1935,7 @@ void run_app(void) {
         case MAIN_DOWNLOAD_MANUALS: {
             app_settings s = load_settings();
             if (s.manual_download_dir[0] == '\0') {
-                show_warning("Manual download directory not set.\n\n"
-                             "Go to Settings and set a download\n"
-                             "directory for manuals.\n\n"
-                             "You'll also need a Pak like\n"
-                             "SDLReader to view downloaded PDFs.");
+                show_warning(T("sg.warn.no_manual_dir"));
             } else {
                 if (show_library_screen(LIB_MODE_MANUAL)) show_progress_screen();
             }
@@ -1966,23 +1955,11 @@ void run_app(void) {
                 if (action == QUIT_QUEUE_BACKGROUND) {
                     /* Performance warning */
                     const char *warn_message = is_flip_layout()
-                        ? "Background scraping keeps running\n"
-                          "after ScrapeGoat closes.\n"
-                          "This may reduce game performance.\n"
-                          "Sleep pauses downloads.\n"
-                          "Power off stops them.\n"
-                          "Progress appears next time\n"
-                          "you open ScrapeGoat."
-                        : "Background scraping keeps running\n"
-                          "after ScrapeGoat closes.\n\n"
-                          "This may reduce game performance.\n\n"
-                          "Sleep pauses downloads.\n"
-                          "Power off stops them.\n\n"
-                          "Progress appears next time\n"
-                          "you open ScrapeGoat.";
+                        ? T("sg.dialog.bg_warning_compact")
+                        : T("sg.dialog.bg_warning");
                     ap_footer_item warn_footer[] = {
-                        {AP_BTN_B, "CANCEL", false},
-                        {AP_BTN_A, "CONTINUE", true},
+                        {AP_BTN_B, T("sg.btn.cancel"), false},
+                        {AP_BTN_A, T("sg.btn.continue"), true},
                     };
                     ap_message_opts warn_opts = {
                         .message = warn_message,
@@ -1997,7 +1974,7 @@ void run_app(void) {
                     /* Stop local workers and hand off the full queue state. */
                     queue_item *snapshot = malloc(sizeof(queue_item) * QUEUE_MAX_ITEMS);
                     if (!snapshot) {
-                        show_error("Out of memory.");
+                        show_error(T("sg.error.oom"));
                         continue;
                     }
                     int snap_count = queue_handoff_snapshot(snapshot, QUEUE_MAX_ITEMS);
@@ -2018,8 +1995,7 @@ void run_app(void) {
                         daemon_cleanup_all();
                         queue_load_items(snapshot, snap_count);
                         free(snapshot);
-                        show_error("Failed to start background\n"
-                                   "scraping. Try exiting normally.");
+                        show_error(T("sg.error.bg_start_failed"));
                         continue;
                     }
                     free(snapshot);
@@ -2027,13 +2003,11 @@ void run_app(void) {
 
                 if (action == QUIT_QUEUE_EXIT_AND_CANCEL) {
                     ap_footer_item exit_footer[] = {
-                        {AP_BTN_B, "KEEP OPEN", false},
-                        {AP_BTN_A, "EXIT", true},
+                        {AP_BTN_B, T("sg.btn.keep_open"), false},
+                        {AP_BTN_A, T("sg.btn.exit"), true},
                     };
                     ap_message_opts exit_opts = {
-                        .message = "Exit ScrapeGoat and cancel all downloads?\n\n"
-                                   "In-progress items will stop and queued items\n"
-                                   "will be skipped.",
+                        .message = T("sg.dialog.exit_cancel"),
                         .footer = exit_footer,
                         .footer_count = 2,
                     };
