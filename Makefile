@@ -10,7 +10,7 @@ APOSTROPHE_DIR := third_party/apostrophe
 APOSTROPHE_BRANCH := main
 BUILD_DIR := build
 DIST_DIR := $(BUILD_DIR)/release
-STAGING_DIR := $(BUILD_DIR)/staging
+RELEASE_FILENAME := ScrapeGoat.pak.zip
 CACHE_DIR := .cache
 GIT_STATIC_CACHE := $(CACHE_DIR)/git-static
 NEXTUI_PREVIEW_CACHE := $(CACHE_DIR)/nextui-preview
@@ -111,7 +111,8 @@ clean-nextui-preview-cache:
 
 universal: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 	@mkdir -p $(BUILD_DIR)/universal
-	docker run --rm \
+	@rm -f $(BUILD_DIR)/universal/$(APP_NAME)
+	@docker run --rm \
 		-v "$(CURDIR)":/workspace \
 		-e CREDENTIAL_DEFINES='$(CREDENTIAL_DEFINES)' \
 		$(UNIVERSAL_TOOLCHAIN) \
@@ -121,7 +122,8 @@ universal: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 
 tg5040: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 	@mkdir -p $(BUILD_DIR)/tg5040
-	docker run --rm \
+	@rm -f $(BUILD_DIR)/tg5040/$(APP_NAME)
+	@docker run --rm \
 		-v "$(CURDIR)":/workspace \
 		-e CREDENTIAL_DEFINES='$(CREDENTIAL_DEFINES)' \
 		$(TG5040_TOOLCHAIN) \
@@ -130,7 +132,8 @@ tg5040: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 
 tg5050: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 	@mkdir -p $(BUILD_DIR)/tg5050
-	docker run --rm \
+	@rm -f $(BUILD_DIR)/tg5050/$(APP_NAME)
+	@docker run --rm \
 		-v "$(CURDIR)":/workspace \
 		-e CREDENTIAL_DEFINES='$(CREDENTIAL_DEFINES)' \
 		$(TG5050_TOOLCHAIN) \
@@ -139,7 +142,8 @@ tg5050: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 
 my355: check-credentials $(APOSTROPHE_DIR)/include/apostrophe.h
 	@mkdir -p $(BUILD_DIR)/my355
-	docker run --rm \
+	@rm -f $(BUILD_DIR)/my355/$(APP_NAME)
+	@docker run --rm \
 		-v "$(CURDIR)":/workspace \
 		-e CREDENTIAL_DEFINES='$(CREDENTIAL_DEFINES)' \
 		$(MY355_TOOLCHAIN) \
@@ -175,16 +179,12 @@ package-my355: my355 $(GIT_STATIC_CACHE)/git
 	@$(MAKE) do-package PLATFORM=my355 BIN_SRC=$(BUILD_DIR)/my355/$(APP_NAME) LIB_SRC=$(BUILD_DIR)/my355/lib
 
 package-universal: universal $(GIT_STATIC_CACHE)/git
-	@set -e; for platform in tg5040 tg5050 my355 h700; do \
-		$(MAKE) do-package PLATFORM=$$platform \
-			BIN_SRC=$(BUILD_DIR)/universal/$(APP_NAME) \
-			LIB_SRC=$(BUILD_DIR)/universal/lib; \
-	done
-	@set -e; for platform in tg5040 tg5050 my355 h700; do \
-		cmp -s "$(BUILD_DIR)/universal/$(APP_NAME)" \
-			"$(BUILD_DIR)/$$platform/$(PAK_NAME).pak/$(APP_NAME)"; \
-	done
-	@echo "Verified one identical device binary in all four package trees."
+	@$(MAKE) do-package PLATFORM=universal \
+		BIN_SRC=$(BUILD_DIR)/universal/$(APP_NAME) \
+		LIB_SRC=$(BUILD_DIR)/universal/lib
+	@cmp -s "$(BUILD_DIR)/universal/$(APP_NAME)" \
+		"$(BUILD_DIR)/universal/$(PAK_NAME).pak/$(APP_NAME)"
+	@echo "Verified the packaged universal device binary."
 
 do-package:
 	@if [ -z "$(PLATFORM)" ] || [ -z "$(BIN_SRC)" ]; then \
@@ -203,17 +203,13 @@ do-package:
 	fi
 	@mkdir -p $(DIST_DIR)/$(PLATFORM)
 	@rm -f $(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip
-	@cd $(BUILD_DIR)/$(PLATFORM) && zip -r "$(CURDIR)/$(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip" "$(PAK_NAME).pak" -x '.*'
+	@cd $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak && zip -r "$(CURDIR)/$(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip" . -x '.*'
 
 package: package-universal
-	@rm -rf $(STAGING_DIR)
-	@for platform in tg5040 tg5050 my355 h700; do \
-		mkdir -p "$(STAGING_DIR)/Tools/$$platform"; \
-		cp -a "$(BUILD_DIR)/$$platform/$(PAK_NAME).pak" "$(STAGING_DIR)/Tools/$$platform/"; \
-	done
 	@mkdir -p $(DIST_DIR)/all
-	@rm -f $(DIST_DIR)/all/$(PAK_NAME).pakz
-	@cd $(STAGING_DIR) && zip -9 -r "$(CURDIR)/$(DIST_DIR)/all/$(PAK_NAME).pakz" . -x '.*'
+	@rm -f $(DIST_DIR)/all/$(RELEASE_FILENAME) $(DIST_DIR)/all/$(PAK_NAME).pakz
+	@cp $(DIST_DIR)/universal/$(PAK_NAME).pak.zip $(DIST_DIR)/all/$(RELEASE_FILENAME)
+	@unzip -Z1 $(DIST_DIR)/all/$(RELEASE_FILENAME) | grep -qx "$(APP_NAME)"
 
 package-matrix: package-tg5040 package-tg5050 package-my355
 
@@ -270,7 +266,7 @@ deploy-platform:
 	PAK_DIR="$$PAK_ROOT/$(PAK_NAME).pak"; \
 	echo "Deploying $(PAK_NAME).pak to $$PAK_DIR..."; \
 	$$ADB_CMD shell "rm -rf '$$PAK_DIR' && mkdir -p '$$PAK_ROOT'"; \
-	$$ADB_CMD push "$(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak" "$$PAK_ROOT/"; \
+	$$ADB_CMD push "$(BUILD_DIR)/universal/$(PAK_NAME).pak" "$$PAK_ROOT/"; \
 	echo "Deploy complete."
 
 # ── Cleanup ─────────────────────────────────────────────────
@@ -297,7 +293,7 @@ help:
 	@echo "  update-apostrophe  Pin Apostrophe submodule to origin/main"
 	@echo "  setup-nextui-preview-cache  Fetch pinned NextUI preview sprites into .cache"
 	@echo "  clean-nextui-preview-cache  Remove the cached desktop preview assets"
-	@echo "  package       Package one binary for all four platforms"
+	@echo "  package       Build the platform-neutral Pak Store archive"
 	@echo "  package-matrix  Build the legacy three-toolchain regression matrix"
 	@echo "  deploy        Detect adb platform, package, and push"
 	@echo "  build-git-static  Build static git binary (cached)"

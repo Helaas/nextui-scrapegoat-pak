@@ -5,7 +5,7 @@
   "description": "Scrape artwork and manuals from ScreenScraper.fr and download cheats from Libretro for your ROM library.",
   "author": "Helaas",
   "repo_url": "https://github.com/Helaas/nextui-scrapegoat-pak",
-  "release_filename": "ScrapeGoat.pakz",
+  "release_filename": "ScrapeGoat.pak.zip",
   "changelog": {
     "v2.2.0": "Fixes incorrect colors with NextUI's RGBA theme format.",
     "v2.1.0": "Adds PDF manual downloads with configurable storage, background queue handoff and resume, clearer quit behavior, smarter cheat-file selection, and daemon-safe artwork scraping.",

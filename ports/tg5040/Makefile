@@ -42,6 +42,6 @@ $(CURL_STAMP): /workspace/scripts/build_third_party.sh
 
 $(BUILD_DIR)/scrapegoat: $(SRC) $(HDR) $(CURL_STAMP)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $(SRC) $(LDFLAGS)
+	@$(CC) $(CFLAGS) -o $@ $(SRC) $(LDFLAGS)
 	$(STRIP) $@
 	$(THIRD_PARTY_SCRIPT) stage-runtime-libs $(PLATFORM_ID) "$@" "$(BUILD_DIR)/lib"
