@@ -34,7 +34,7 @@ End users can configure their personal ScreenScraper.fr username and password vi
 brew install sdl2 sdl2_ttf sdl2_image libcurl pkg-config
 ```
 
-**Embedded device builds** (tg5040/tg5050/my355):
+**Embedded device builds** (tg5040/tg5050/my355/h700):
 - Docker with ARM64 support
 - GNU Make
 
@@ -69,14 +69,14 @@ make run-mac        # Build + run macOS development binary
 If credentials are missing or still contain placeholders, the build will fail with:
 
 ```
-ERROR: SCREENSCRAPER_DEV_ID and SCREENSCRAPER_DEV_PASSWORD must be set in .env.local
+ERROR: set SCREENSCRAPER_DEV_ID and SCREENSCRAPER_DEV_PASSWORD in .env.local or the environment
 ```
 
 See the [README](README.md#building) for all build targets (`make tg5040`, `make package`, `make deploy`, etc.).
 
 ## Deployment
 
-### Embedded Devices (TG5040/TG5050/MY355)
+### Embedded Devices (TG5040/TG5050/MY355/H700)
 
 Credentials are baked into the binary at build time. The deployed `.pak` contains no `.env` files or plaintext secrets — only the compiled binary with embedded credentials.
 

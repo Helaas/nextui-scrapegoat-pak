@@ -1,6 +1,6 @@
 # ScrapeGoat
 
-A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and manuals from [ScreenScraper.fr](https://www.screenscraper.fr/) and downloads cheats from [Libretro](https://github.com/libretro/libretro-database) for your ROM library on `tg5040`, `tg5050`, and `my355` devices.
+A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and manuals from [ScreenScraper.fr](https://www.screenscraper.fr/) and downloads cheats from [Libretro](https://github.com/libretro/libretro-database) for your ROM library on `tg5040`, `tg5050`, `my355`, and `h700` devices.
 
 ## Supported Platforms
 
@@ -10,6 +10,7 @@ A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and man
 | `tg5040` (TG3040) | TrimUI Brick | 1024×768 | Docker (ARM64) |
 | `tg5050` | TrimUI Smart Pro S | 1280×720 | Docker (ARM64) |
 | `my355` | Miyoo Flip | 640x480 | Docker (ARM64) |
+| `h700` | Anbernic H700 devices | Varies | Docker (ARM64) |
 
 > The Brick and Smart Pro share the same `tg5040` filesystem layout (tools, roms, settings paths are identical). The pak auto-detects the Brick via the `DEVICE` environment variable (`"brick"` vs `"smartpro"`), which NextUI's `launch.sh` exports at startup.
 
@@ -395,20 +396,21 @@ Embedded builds vendor their own curl/OpenSSL runtime bits and package `lib/cace
 # Build the mac development binary
 make mac
 
-# Build for specific device platforms
+# Build one binary for every supported NextUI device
+make universal
+make
+
+# Optional legacy regression builds
 make tg5040
 make tg5050
 make my355
 
-# Build all device platforms
-make
-
-# Package per-platform bundles
+# Optional legacy per-platform bundles
 make package-tg5040
 make package-tg5050
 make package-my355
 
-# Package all supported platforms into release zips + combined .pakz
+# Copy the universal binary into all four platform trees and build the .pakz
 make package
 
 # See all targets
@@ -438,6 +440,7 @@ when redistributing GPL-covered object code: [installer](https://www.gnu.org/lic
 | Target | Output |
 |--------|--------|
 | mac | `build/mac/scrapegoat` |
+| universal | `build/universal/scrapegoat` |
 | tg5040 | `build/tg5040/scrapegoat` |
 | tg5050 | `build/tg5050/scrapegoat` |
 | my355 | `build/my355/scrapegoat` |
@@ -460,7 +463,7 @@ The `.pak.zip` includes:
 
 2. **For a per-platform zip:**
    - Extract `ScrapeGoat.pak.zip` to your SD card as `Tools/<platform>/ScrapeGoat.pak/`
-   - Replace `<platform>` with `tg5040`, `tg5050`, or `my355`
+   - Replace `<platform>` with `tg5040`, `tg5050`, `my355`, or `h700`
 
 3. **For the combined `.pakz`:**
    - Place `build/release/all/ScrapeGoat.pakz` at the root of your SD card
