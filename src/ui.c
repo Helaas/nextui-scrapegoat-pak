@@ -878,11 +878,12 @@ static bool show_mapping_picker(const console_dir *console, const char *tag) {
             : (systems_resolve(NULL, tag).source == MAPPING_USER_TAG);
         if (clearable) {
             rows[row_count].kind = PICKER_ROW_CLEAR;
-            sg_mapping without = folder_scope ? systems_resolve(NULL, tag)
-                                             : (sg_mapping){systems_builtin_tag(tag),
-                                                            MAPPING_BUILTIN, false};
+            /* Name what clearing actually falls back to: for a folder that is
+             * the suffix default, for a suffix default it is the bundled one,
+             * and either may be nothing at all. */
             const sg_platform *fallback = folder_scope
-                ? without.platform : systems_builtin_tag(tag);
+                ? systems_resolve(NULL, tag).platform
+                : systems_builtin_tag(tag);
             snprintf(labels[row_count], 192, "Clear this %s mapping",
                      folder_scope ? "folder's" : "suffix");
             snprintf(meta[row_count], 40, "%s",
