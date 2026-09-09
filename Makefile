@@ -25,6 +25,7 @@ TG5050_TOOLCHAIN := ghcr.io/loveretro/tg5050-toolchain:latest
 MY355_TOOLCHAIN  := ghcr.io/loveretro/my355-toolchain:latest
 UNIVERSAL_TOOLCHAIN := ghcr.io/loveretro/tg5040-toolchain@sha256:f131c6af64029a8723d0ce8d3c2682642f5f091b04714f6beedda9bec18477ab
 ADB ?= adb
+NEXTUI_REPO ?= ../NextUI
 
 COMMON_INCLUDES := -I$(APOSTROPHE_DIR)/include -Ithird_party/cJSON -Ithird_party/md5 -Ithird_party/miniz -Ithird_party/stb
 
@@ -51,6 +52,7 @@ endif
 .PHONY: all native mac run-mac run-native universal tg5040 tg5050 my355 \
 	package package-universal package-matrix package-tg5040 package-tg5050 package-my355 do-package \
 	deploy deploy-platform clean clean-all help check-credentials \
+	audit-systems audit-systems-inventory \
 	build-git-static clean-git-static update-apostrophe \
 	setup-nextui-preview-cache clean-nextui-preview-cache
 
@@ -269,6 +271,17 @@ deploy-platform:
 	$$ADB_CMD push "$(BUILD_DIR)/universal/$(PAK_NAME).pak" "$$PAK_ROOT/"; \
 	echo "Deploy complete."
 
+# ── System suffix audit ─────────────────────────────────────
+#
+# Override the NextUI checkout with NEXTUI_REPO=/path/to/NextUI.
+
+audit-systems:
+	@python3 scripts/audit_systems.py --nextui-repo "$(NEXTUI_REPO)" --write-report
+
+audit-systems-inventory:
+	@python3 scripts/audit_systems.py --nextui-repo "$(NEXTUI_REPO)" \
+		--inventory-only --write-report
+
 # ── Cleanup ─────────────────────────────────────────────────
 
 clean:
@@ -298,5 +311,7 @@ help:
 	@echo "  deploy        Detect adb platform, package, and push"
 	@echo "  build-git-static  Build static git binary (cached)"
 	@echo "  clean-git-static  Remove cached static git"
+	@echo "  audit-systems  Audit suffix inventory and catalog coverage (NEXTUI_REPO=$(NEXTUI_REPO))"
+	@echo "  audit-systems-inventory  Discovery only; does not evaluate coverage"
 	@echo "  clean         Remove build artifacts"
 	@echo "  clean-all     Remove build + cache"
