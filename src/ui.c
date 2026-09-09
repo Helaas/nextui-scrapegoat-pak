@@ -215,15 +215,29 @@ typedef struct {
     int art_count;
     int cheat_count;
     int manual_count;
-    bool has_ss;      /* has ScreenScraper mapping */
-    bool has_libretro; /* has libretro cheat directory */
+    bool has_ss;        /* selected platform has a ScreenScraper id */
+    bool has_libretro;  /* selected platform has a cheat database */
+    bool mapped;        /* a platform is selected for this folder */
+    bool hidden;        /* the user hid this folder */
+    mapping_source source;
+    const sg_platform *platform;
 } system_stats;
 
 static system_stats compute_system_stats(const console_dir *console, bool show_hidden,
                                           const char *manual_download_dir) {
     system_stats stats = {0};
-    stats.has_ss = (ss_platform_id(console->tag) >= 0);
-    stats.has_libretro = (libretro_dir(console->tag) != NULL);
+    sg_mapping mapping = systems_resolve(console->path, console->tag);
+    stats.platform = mapping.platform;
+    stats.source = mapping.source;
+    stats.hidden = mapping.hidden;
+    stats.mapped = mapping.platform != NULL;
+    stats.has_ss = mapping.platform && mapping.platform->ss_id >= 0;
+    stats.has_libretro = mapping.platform && mapping.platform->libretro_dir;
+
+    /* Nothing to count for a folder the user hid or has not mapped: the
+     * per-ROM asset checks are the expensive part of this scan. */
+    if (stats.hidden || !stats.mapped)
+        return stats;
 
     rom_file *roms = NULL;
     int rom_count = scan_roms(console->path, show_hidden, &roms);

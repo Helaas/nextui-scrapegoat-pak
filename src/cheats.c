@@ -1033,9 +1033,14 @@ run_result download_cheats_for_console(const console_dir *console,
     bool list_ready = false;
     bool cancelled = false;
 
-    const char *libretro_dir_name = libretro_dir(console->tag);
+    sg_mapping mapping = systems_resolve(console->path, console->tag);
+    if (!mapping.platform)
+        return make_run_error(summary,
+                              "No scraping platform is selected for this folder.");
+    const char *libretro_dir_name = mapping.platform->libretro_dir;
     if (!libretro_dir_name)
-        return make_run_error(summary, "This system does not have a Libretro cheat directory.");
+        return make_run_error(summary,
+                              "Libretro has no cheat database for this platform.");
 
     if (set_progress)
         set_progress(0.0f);

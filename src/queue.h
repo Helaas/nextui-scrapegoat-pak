@@ -41,6 +41,7 @@ typedef struct {
     char                      system_display[256];
     char                      console_path[PATH_MAX];
     int                       system_id;   /* ScreenScraper ID, -1 if no SS mapping */
+    char                      cheat_dir[256]; /* libretro cht/ directory captured at enqueue */
     queue_item_status         status;
     char                      error_msg[256];
     bool                      force;       /* Re-download even if asset already exists */
@@ -109,6 +110,16 @@ queue_item_status queue_get_rom_status(const char *rom_path, queue_item_type typ
 queue_stats queue_get_stats(void);
 queue_api_stats queue_get_api_stats(void);
 bool queue_is_active(void);
+
+/* True while any item is queued or still being worked on. Editing system
+ * mappings is refused until this is false: a job carries the provider target
+ * it was queued with, and retargeting live work is not supported. */
+bool queue_has_unfinished_work(void);
+
+/* Prepare for a mapping edit: refuse if work remains, otherwise join a
+ * finishing manager and drop cached cheat lists so the next job rebuilds them
+ * against the new mapping. Returns true when editing may proceed. */
+bool queue_begin_mapping_edit(void);
 
 /* Returns true if queue state changed since last call (for UI refresh). */
 bool queue_check_dirty(void);

@@ -14,6 +14,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#if defined(PLATFORM_MAC)
+#include <mach-o/dyld.h>
+#endif
+
 /* Suppress GCC warnings about snprintf truncation when combining
    PATH_MAX-sized strings — truncation is safe by design. */
 #if defined(__GNUC__) && !defined(__clang__)
@@ -119,6 +123,59 @@ void get_cheat_repo_path(char *buf, size_t buflen) {
 void get_settings_path(char *buf, size_t buflen) {
     snprintf(buf, buflen, "%s/.userdata/shared/ScrapeGoat/settings.json",
              get_sdcard_path());
+}
+
+void get_system_overrides_path(char *buf, size_t buflen) {
+    snprintf(buf, buflen, "%s/.userdata/shared/ScrapeGoat/system_overrides.json",
+             get_sdcard_path());
+}
+
+/* ── Executable location ─────────────────────────────────── */
+
+int get_executable_path(char *buf, size_t buflen) {
+    if (!buf || buflen == 0)
+        return -1;
+    buf[0] = '\0';
+
+#if defined(PLATFORM_MAC)
+    char self[PATH_MAX];
+    uint32_t size = (uint32_t)sizeof(self);
+    if (_NSGetExecutablePath(self, &size) != 0)
+        return -1;
+    char resolved[PATH_MAX];
+    const char *chosen = realpath(self, resolved) ? resolved : self;
+    if (strlen(chosen) >= buflen)
+        return -1;
+    snprintf(buf, buflen, "%s", chosen);
+    return 0;
+#else
+    char self[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (len < 0)
+        return -1;
+    self[len] = '\0';
+    if ((size_t)len >= buflen)
+        return -1;
+    snprintf(buf, buflen, "%s", self);
+    return 0;
+#endif
+}
+
+int get_executable_dir(char *buf, size_t buflen) {
+    char exe[PATH_MAX];
+    if (get_executable_path(exe, sizeof(exe)) != 0)
+        return -1;
+    char *slash = strrchr(exe, '/');
+    if (!slash)
+        return -1;
+    if (slash == exe)
+        slash[1] = '\0';   /* the executable sits in "/" */
+    else
+        *slash = '\0';
+    if (strlen(exe) >= buflen)
+        return -1;
+    snprintf(buf, buflen, "%s", exe);
+    return 0;
 }
 
 /* ── String utilities ────────────────────────────────────── */
@@ -802,7 +859,7 @@ static char *my_strdup(const char *s) {
     return dup;
 }
 
-static void ensure_dir_exists(const char *path) {
+void ensure_dir_exists(const char *path) {
     char tmp[PATH_MAX];
     snprintf(tmp, sizeof(tmp), "%s", path);
     for (char *p = tmp + 1; *p; p++) {

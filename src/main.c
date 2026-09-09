@@ -13,6 +13,7 @@
 #include "device.h"
 #include "queue.h"
 #include "screenscraper.h"
+#include "systems.h"
 #include "ui.h"
 
 #include <stdio.h>
@@ -104,9 +105,28 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* The platform catalog decides what every folder scrapes, so a missing or
+     * invalid one is fatal rather than a silent zero-support state. */
+    if (systems_init() != 0) {
+        const char *reason = systems_last_error();
+        fprintf(stderr, "scrapegoat: %s\n", reason ? reason : "no platform catalog");
+        char message[640];
+        snprintf(message, sizeof(message),
+                 "The platform catalog could not be loaded.\n\n%s",
+                 reason ? reason : "No further detail is available.");
+        ap_footer_item footer[] = {{AP_BTN_B, "QUIT", false}};
+        ap_message_opts opts = {.message = message, .footer = footer,
+                                .footer_count = 1};
+        ap_confirm_result result;
+        ap_confirmation(&opts, &result);
+        ap_quit();
+        return 1;
+    }
+
     queue_init();
     run_app();
     queue_shutdown();
+    systems_shutdown();
 
     ap_quit();
     return 0;
