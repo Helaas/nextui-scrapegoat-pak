@@ -97,6 +97,10 @@ int systems_tag_candidates(const char *tag, const sg_platform **out, int max);
 int systems_suggest(const char *tag, const char *display, const char *filter,
                     const sg_platform **out, int max);
 
+/* True when the platform's name, aliases or id contain `text`,
+ * case-insensitively. An empty or NULL filter matches everything. */
+bool systems_platform_matches(const sg_platform *platform, const char *text);
+
 /* ── Overrides ────────────────────────────────────────────────── */
 
 /* Each mutation validates, persists, and only then publishes the new state.
@@ -106,6 +110,10 @@ int systems_suggest(const char *tag, const char *display, const char *filter,
 int systems_set_tag(const char *tag, const char *platform_id);
 int systems_set_folder_platform(const char *console_path, const char *platform_id);
 int systems_set_folder_hidden(const char *console_path, bool hidden);
+
+/* Remove every saved override for a folder, its hidden flag included. Used to
+ * clear an entry left behind by a rename. */
+int systems_clear_folder(const char *console_path);
 
 /* Read-only enumeration of saved overrides, for Settings. Pointers stay valid
  * until the next mutation or systems_shutdown(). */

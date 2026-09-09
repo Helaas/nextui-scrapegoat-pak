@@ -1092,6 +1092,18 @@ static bool names_match(const platform_rec *rec, const char *text) {
     return false;
 }
 
+bool systems_platform_matches(const sg_platform *platform, const char *text) {
+    if (!platform)
+        return false;
+    if (!text || !text[0])
+        return true;
+    for (int i = 0; i < platform_count; i++) {
+        if (&platforms[i].pub == platform)
+            return matches_filter(&platforms[i], text);
+    }
+    return false;
+}
+
 int systems_suggest(const char *tag, const char *display, const char *filter,
                     const sg_platform **out, int max) {
     if (!out || max <= 0)
@@ -1238,6 +1250,10 @@ int systems_set_folder_platform(const char *console_path, const char *platform_i
 
 int systems_set_folder_hidden(const char *console_path, bool hidden) {
     return set_folder(console_path, NULL, false, hidden, true);
+}
+
+int systems_clear_folder(const char *console_path) {
+    return set_folder(console_path, NULL, true, false, true);
 }
 
 /* ── Override enumeration ─────────────────────────────────────── */

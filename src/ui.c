@@ -746,128 +746,519 @@ static bool show_rom_detail_screen(const rom_file *rom,
 
 /* ── Library: System list ─────────────────────────────────── */
 
-static bool show_library_screen(library_mode mode) {
-    app_settings settings = load_settings();
+/* ── System mapping picker ────────────────────────────────── */
 
-    console_dir *consoles = NULL;
-    int console_count = scan_console_dirs(settings.show_hidden, &consoles);
-    if (console_count <= 0) {
-        show_error("No ROM folders found.");
-        free(consoles);
-        free_settings(&settings);
+/* A folder's suffix names the emulator NextUI launches, which does not always
+ * name one scraping platform. The picker lets a user say what a folder holds,
+ * either for that folder alone or as their own default for the suffix. */
+
+typedef enum {
+    PICKER_ROW_SCOPE,
+    PICKER_ROW_VISIBILITY,
+    PICKER_ROW_CLEAR,
+    PICKER_ROW_PLATFORM,
+} picker_row_kind;
+
+typedef struct {
+    picker_row_kind kind;
+    int platform;       /* catalog index, for PICKER_ROW_PLATFORM */
+} picker_row;
+
+/* Editing a mapping is refused while work is queued: a job keeps the provider
+ * target it was queued with, and retargeting live work is not supported. */
+static bool ensure_mapping_edit_allowed(void) {
+    if (queue_begin_mapping_edit())
+        return true;
+    show_error("Wait for downloads to finish or cancel them before changing "
+               "system mappings.");
+    return false;
+}
+
+static const char *provider_summary(const sg_platform *platform) {
+    if (!platform)
+        return "";
+    bool art = platform->ss_id >= 0;
+    bool cheats = platform->libretro_dir != NULL;
+    if (art && cheats) return "Art + Cheats";
+    if (art)           return "Art only";
+    if (cheats)        return "Cheats only";
+    return "No providers";
+}
+
+static int compare_platform_names(const void *a, const void *b) {
+    const sg_platform *pa = systems_platform_at(*(const int *)a);
+    const sg_platform *pb = systems_platform_at(*(const int *)b);
+    int order = strcasecmp(pa->name, pb->name);
+    return order != 0 ? order : strcmp(pa->id, pb->id);
+}
+
+static void describe_mapping(const sg_mapping *mapping, const char *tag,
+                             char *buf, size_t buflen) {
+    const char *source =
+        mapping->source == MAPPING_USER_FOLDER ? "this folder"
+      : mapping->source == MAPPING_USER_TAG    ? "your default for this suffix"
+      : mapping->source == MAPPING_BUILTIN     ? "the bundled default"
+      : "nothing";
+
+    if (!mapping->platform) {
+        const sg_platform *candidates[8];
+        int count = systems_tag_candidates(tag, candidates, 8);
+        if (count > 0)
+            snprintf(buf, buflen,
+                     "No platform selected. The %s suffix can hold %d different "
+                     "systems, so there is no safe default.", tag, count);
+        else
+            snprintf(buf, buflen,
+                     "No platform selected for the %s suffix yet.", tag);
+        return;
+    }
+    snprintf(buf, buflen, "%s — %s, set by %s.",
+             mapping->platform->name, provider_summary(mapping->platform), source);
+}
+
+/* Returns true when a mapping was saved. `console` may be NULL to edit a
+ * suffix default with no folder in hand. */
+static bool show_mapping_picker(const console_dir *console, const char *tag) {
+    if (systems_platform_count() <= 0) {
+        show_error("The platform catalog is not loaded.");
         return false;
     }
 
-    /* Build menu names and compute stats, filtering by mode */
-    char (*names)[512] = malloc(sizeof(char[512]) * (size_t)console_count);
-    system_stats *stats = malloc(sizeof(system_stats) * (size_t)console_count);
-    build_console_menu_names(consoles, console_count, names);
-
-    /* Only compute manual counts in manual mode to avoid extra stat() calls
-       on large libraries during artwork/cheat browsing. */
-    const char *manual_dir_for_stats = (mode == LIB_MODE_MANUAL)
-        ? settings.manual_download_dir : NULL;
-    for (int i = 0; i < console_count; i++)
-        stats[i] = compute_system_stats(&consoles[i], settings.show_hidden,
-                                        manual_dir_for_stats);
-
-    /* Filter consoles by mode and build visible list */
-    int *visible_map = malloc(sizeof(int) * (size_t)console_count);
-    int visible_count = 0;
-    for (int i = 0; i < console_count; i++) {
-        if (mode == LIB_MODE_ART && !stats[i].has_ss) continue;
-        if (mode == LIB_MODE_CHEAT && !stats[i].has_libretro) continue;
-        if (mode == LIB_MODE_MANUAL && !stats[i].has_ss) continue;
-        visible_map[visible_count++] = i;
-    }
-
-    if (visible_count <= 0) {
-        const char *err_msg = (mode == LIB_MODE_ART)
-            ? "No systems with artwork support found."
-            : (mode == LIB_MODE_CHEAT)
-                ? "No systems with cheat support found."
-                : "No systems with manual support found.";
-        show_error(err_msg);
-        free(visible_map);
-        free(names);
-        free(stats);
-        free(consoles);
-        free_settings(&settings);
+    int total = systems_platform_count();
+    int *sorted = malloc(sizeof(int) * (size_t)total);
+    if (!sorted) {
+        show_error("Out of memory.");
         return false;
     }
+    for (int i = 0; i < total; i++)
+        sorted[i] = i;
+    qsort(sorted, (size_t)total, sizeof(int), compare_platform_names);
 
-    /* Build labels (system name) and metadata (counts) */
-    char (*labels)[512] = malloc(sizeof(char[512]) * (size_t)visible_count);
-    char (*meta)[32]    = malloc(sizeof(char[32])  * (size_t)visible_count);
-    for (int vi = 0; vi < visible_count; vi++) {
-        int i = visible_map[vi];
-        snprintf(labels[vi], 512, "%s", names[i]);
-        int count = (mode == LIB_MODE_ART) ? stats[i].art_count
-                  : (mode == LIB_MODE_CHEAT) ? stats[i].cheat_count
-                  : stats[i].manual_count;
-        snprintf(meta[vi], 32, "%d / %d", count, stats[i].rom_count);
-    }
-
-    const char *title = (mode == LIB_MODE_ART) ? "Artwork"
-                      : (mode == LIB_MODE_CHEAT) ? "Cheats"
-                      : "Manuals";
-
+    bool folder_scope = console != NULL;
+    bool changed = false;
+    char filter[128] = "";
     int initial_idx = 0;
     int visible_start = 0;
 
+    picker_row *rows = malloc(sizeof(picker_row) * (size_t)(total + 4));
+    char (*labels)[192] = malloc(sizeof(char[192]) * (size_t)(total + 4));
+    char (*meta)[40]    = malloc(sizeof(char[40])  * (size_t)(total + 4));
+    const sg_platform *suggestions[8];
+
+    if (!rows || !labels || !meta) {
+        show_error("Out of memory.");
+        free(sorted); free(rows); free(labels); free(meta);
+        return false;
+    }
+
     for (;;) {
-        ap_list_item *items = calloc((size_t)visible_count, sizeof(ap_list_item));
-        for (int vi = 0; vi < visible_count; vi++) {
-            items[vi].label    = labels[vi];
-            items[vi].trailing_text = meta[vi];
+        sg_mapping mapping = systems_resolve(console ? console->path : NULL, tag);
+        const sg_platform *effective = mapping.platform;
+        int row_count = 0;
+
+        rows[row_count].kind = PICKER_ROW_SCOPE;
+        snprintf(labels[row_count], 192, "Applies to: %s",
+                 folder_scope ? "this folder" : "every folder with this suffix");
+        snprintf(meta[row_count], 40, "%s", folder_scope ? "folder" : tag);
+        row_count++;
+
+        if (console) {
+            rows[row_count].kind = PICKER_ROW_VISIBILITY;
+            snprintf(labels[row_count], 192, "%s this folder",
+                     mapping.hidden ? "Show" : "Hide");
+            snprintf(meta[row_count], 40, "%s",
+                     mapping.hidden ? "hidden" : "visible");
+            row_count++;
+        }
+
+        /* Only offer a clear when something is actually saved at this scope:
+         * a bundled-only mapping has nothing to clear. */
+        bool clearable = folder_scope
+            ? (console && mapping.source == MAPPING_USER_FOLDER)
+            : (systems_resolve(NULL, tag).source == MAPPING_USER_TAG);
+        if (clearable) {
+            rows[row_count].kind = PICKER_ROW_CLEAR;
+            sg_mapping without = folder_scope ? systems_resolve(NULL, tag)
+                                             : (sg_mapping){systems_builtin_tag(tag),
+                                                            MAPPING_BUILTIN, false};
+            const sg_platform *fallback = folder_scope
+                ? without.platform : systems_builtin_tag(tag);
+            snprintf(labels[row_count], 192, "Clear this %s mapping",
+                     folder_scope ? "folder's" : "suffix");
+            snprintf(meta[row_count], 40, "%s",
+                     fallback ? fallback->name : "unmapped");
+            row_count++;
+        }
+
+        int suggestion_count = systems_suggest(tag, console ? console->display : NULL,
+                                               filter[0] ? filter : NULL,
+                                               suggestions, 8);
+        for (int i = 0; i < suggestion_count && row_count < total + 4; i++) {
+            int index = -1;
+            for (int p = 0; p < total; p++) {
+                if (systems_platform_at(p) == suggestions[i]) { index = p; break; }
+            }
+            if (index < 0) continue;
+            rows[row_count].kind = PICKER_ROW_PLATFORM;
+            rows[row_count].platform = index;
+            snprintf(labels[row_count], 192, "%s%s", suggestions[i]->name,
+                     suggestions[i] == effective ? "  •" : "");
+            snprintf(meta[row_count], 40, "%s", provider_summary(suggestions[i]));
+            row_count++;
+        }
+
+        for (int i = 0; i < total && row_count < total + 4; i++) {
+            int index = sorted[i];
+            const sg_platform *platform = systems_platform_at(index);
+            bool duplicate = false;
+            for (int s = 0; s < suggestion_count; s++) {
+                if (suggestions[s] == platform) { duplicate = true; break; }
+            }
+            if (duplicate)
+                continue;
+            if (!systems_platform_matches(platform, filter))
+                continue;
+            rows[row_count].kind = PICKER_ROW_PLATFORM;
+            rows[row_count].platform = index;
+            snprintf(labels[row_count], 192, "%s%s", platform->name,
+                     platform == effective ? "  •" : "");
+            snprintf(meta[row_count], 40, "%s", provider_summary(platform));
+            row_count++;
+        }
+
+        char title[128];
+        if (console)
+            snprintf(title, sizeof(title), "%s (%s)", console->display, tag);
+        else
+            snprintf(title, sizeof(title), "Suffix default: %s", tag);
+
+        char help[512];
+        describe_mapping(&mapping, tag, help, sizeof(help));
+        size_t used = strlen(help);
+        snprintf(help + used, sizeof(help) - used,
+                 "\n\nA folder's own choice always wins over a suffix default. "
+                 "Not every platform has both artwork and cheats.%s",
+                 filter[0] ? "\n\nSearch is active; press Y to change it." : "");
+
+        ap_list_item *items = calloc((size_t)row_count, sizeof(ap_list_item));
+        if (!items) break;
+        for (int i = 0; i < row_count; i++) {
+            items[i].label = labels[i];
+            items[i].trailing_text = meta[i];
         }
 
         ap_footer_item footer[] = {
-            {AP_BTN_A, "OPEN", true},
+            {AP_BTN_A, "SELECT", true},
+            {AP_BTN_Y, filter[0] ? "SEARCH*" : "SEARCH", false},
             {AP_BTN_B, "BACK", false},
         };
-
-        ap_list_opts opts = ap_list_default_opts(title, items, visible_count);
+        ap_list_opts opts = ap_list_default_opts(title, items, row_count);
         opts.footer = footer;
-        opts.footer_count = 2;
+        opts.footer_count = 3;
         opts.status_bar = &g_status_bar;
-        opts.initial_index = initial_idx;
+        opts.help_text = help;
+        opts.secondary_action_button = AP_BTN_Y;
+        opts.initial_index = initial_idx < row_count ? initial_idx : 0;
         opts.visible_start_index = visible_start;
 
         ap_list_result result;
         int ret = ap_list(&opts, &result);
         free(items);
+        if (ret == AP_CANCELLED)
+            break;
 
-        if (ret == AP_CANCELLED) break;
+        initial_idx = result.selected_index;
+        visible_start = result.visible_start_index;
+
+        if (result.action == AP_ACTION_SECONDARY_TRIGGERED) {
+            ap_keyboard_result kb;
+            if (ap_keyboard(filter, "B: Cancel", AP_KB_GENERAL, &kb) == AP_OK) {
+                snprintf(filter, sizeof(filter), "%s", kb.text);
+                initial_idx = 0;
+                visible_start = 0;
+            }
+            continue;
+        }
+
+        if (result.action != AP_ACTION_SELECTED
+            && result.action != AP_ACTION_TRIGGERED)
+            continue;
 
         int sel = result.selected_index;
-        if (sel < 0 || sel >= visible_count) break;
+        if (sel < 0 || sel >= row_count)
+            continue;
 
-        initial_idx = sel;
-        visible_start = result.visible_start_index;
-        int real_idx = visible_map[sel];
+        switch (rows[sel].kind) {
+        case PICKER_ROW_SCOPE:
+            if (console)
+                folder_scope = !folder_scope;
+            initial_idx = 0;
+            visible_start = 0;
+            break;
 
-        /* A: Open ROM list */
-        if (show_rom_list_screen(&consoles[real_idx], &settings, mode)) {
-            free(visible_map);
-            free(names);
-            free(labels);
-            free(meta);
-            free(stats);
-            free(consoles);
-            free_settings(&settings);
-            return true;
+        case PICKER_ROW_VISIBILITY: {
+            if (!console || !ensure_mapping_edit_allowed())
+                break;
+            if (systems_set_folder_hidden(console->path, !mapping.hidden) != 0) {
+                show_error(systems_last_error()
+                           ? systems_last_error()
+                           : "Could not save the change.");
+                break;
+            }
+            changed = true;
+            break;
+        }
+
+        case PICKER_ROW_CLEAR: {
+            if (!ensure_mapping_edit_allowed())
+                break;
+            int rc = folder_scope
+                ? systems_set_folder_platform(console->path, NULL)
+                : systems_set_tag(tag, NULL);
+            if (rc != 0) {
+                show_error(systems_last_error()
+                           ? systems_last_error()
+                           : "Could not save the change.");
+                break;
+            }
+            changed = true;
+            break;
+        }
+
+        case PICKER_ROW_PLATFORM: {
+            if (!ensure_mapping_edit_allowed())
+                break;
+            const sg_platform *platform = systems_platform_at(rows[sel].platform);
+            if (!platform)
+                break;
+            int rc = folder_scope
+                ? systems_set_folder_platform(console->path, platform->id)
+                : systems_set_tag(tag, platform->id);
+            if (rc != 0) {
+                show_error(systems_last_error()
+                           ? systems_last_error()
+                           : "Could not save the change.");
+                break;
+            }
+            changed = true;
+            goto done;
+        }
         }
     }
 
-    free(visible_map);
-    free(names);
+done:
+    free(sorted);
+    free(rows);
     free(labels);
     free(meta);
-    free(stats);
-    free(consoles);
+    return changed;
+}
+
+/* ── Library browser ──────────────────────────────────────── */
+
+/* Everything the library list needs for one pass. A mapping edit can change
+ * which folders appear and what they are called, so the whole view is rebuilt
+ * rather than patched. */
+typedef struct {
+    console_dir  *consoles;
+    int           console_count;
+    char        (*names)[512];
+    system_stats *stats;
+    int          *visible_map;
+    int           visible_count;
+    char        (*labels)[512];
+    char        (*meta)[40];
+} library_view;
+
+static void library_view_free(library_view *view) {
+    free(view->consoles);
+    free(view->names);
+    free(view->stats);
+    free(view->visible_map);
+    free(view->labels);
+    free(view->meta);
+    memset(view, 0, sizeof(*view));
+}
+
+/* A folder appears in a mode when it is not hidden and either has no platform
+ * yet — so the user can fix that — or has one this mode can use. */
+static bool console_visible_in_mode(const system_stats *stats, library_mode mode) {
+    if (stats->hidden)
+        return false;
+    if (!stats->mapped)
+        return true;
+    if (mode == LIB_MODE_CHEAT)
+        return stats->has_libretro;
+    return stats->has_ss;
+}
+
+static bool library_view_build(library_view *view, library_mode mode,
+                               const app_settings *settings) {
+    memset(view, 0, sizeof(*view));
+
+    view->console_count = scan_console_dirs(settings->show_hidden, &view->consoles);
+    if (view->console_count <= 0) {
+        free(view->consoles);
+        memset(view, 0, sizeof(*view));
+        return false;
+    }
+
+    size_t count = (size_t)view->console_count;
+    view->names       = malloc(sizeof(char[512]) * count);
+    view->stats       = malloc(sizeof(system_stats) * count);
+    view->visible_map = malloc(sizeof(int) * count);
+    view->labels      = malloc(sizeof(char[512]) * count);
+    view->meta        = malloc(sizeof(char[40]) * count);
+    if (!view->names || !view->stats || !view->visible_map
+        || !view->labels || !view->meta) {
+        library_view_free(view);
+        return false;
+    }
+
+    build_console_menu_names(view->consoles, view->console_count, view->names);
+
+    /* Manual counts cost an extra stat() per ROM, so only pay for them in
+     * manual mode. */
+    const char *manual_dir = (mode == LIB_MODE_MANUAL)
+        ? settings->manual_download_dir : NULL;
+    for (int i = 0; i < view->console_count; i++)
+        view->stats[i] = compute_system_stats(&view->consoles[i],
+                                              settings->show_hidden, manual_dir);
+
+    for (int i = 0; i < view->console_count; i++) {
+        if (!console_visible_in_mode(&view->stats[i], mode))
+            continue;
+        int vi = view->visible_count++;
+        view->visible_map[vi] = i;
+        snprintf(view->labels[vi], 512, "%s", view->names[i]);
+        if (!view->stats[i].mapped) {
+            snprintf(view->meta[vi], 40, "unmapped");
+        } else {
+            int done = (mode == LIB_MODE_ART)   ? view->stats[i].art_count
+                     : (mode == LIB_MODE_CHEAT) ? view->stats[i].cheat_count
+                     : view->stats[i].manual_count;
+            snprintf(view->meta[vi], 40, "%d / %d", done, view->stats[i].rom_count);
+        }
+    }
+    return true;
+}
+
+/* Keep the cursor on the same folder across a rebuild; clamp when its row is
+ * gone because a mapping change made it ineligible. */
+static int library_index_for_path(const library_view *view, const char *path) {
+    if (!path || !path[0])
+        return 0;
+    for (int vi = 0; vi < view->visible_count; vi++) {
+        if (strcmp(view->consoles[view->visible_map[vi]].path, path) == 0)
+            return vi;
+    }
+    return 0;
+}
+
+static bool show_library_screen(library_mode mode) {
+    app_settings settings = load_settings();
+
+    const char *title = (mode == LIB_MODE_ART) ? "Artwork"
+                      : (mode == LIB_MODE_CHEAT) ? "Cheats"
+                      : "Manuals";
+
+    library_view view;
+    if (!library_view_build(&view, mode, &settings)) {
+        show_error("No ROM folders found.");
+        free_settings(&settings);
+        return false;
+    }
+
+    char selected_path[PATH_MAX] = "";
+    int initial_idx = 0;
+    int visible_start = 0;
+    bool started_work = false;
+
+    for (;;) {
+        if (view.visible_count <= 0) {
+            const char *message = (mode == LIB_MODE_CHEAT)
+                ? "No folders are available for cheats. Map a folder to a "
+                  "platform with a cheat database, or unhide one in Settings."
+                : (mode == LIB_MODE_ART)
+                    ? "No folders are available for artwork. Map a folder to a "
+                      "platform ScreenScraper covers, or unhide one in Settings."
+                    : "No folders are available for manuals. Map a folder to a "
+                      "platform ScreenScraper covers, or unhide one in Settings.";
+            show_error(message);
+            break;
+        }
+
+        ap_list_item *items = calloc((size_t)view.visible_count, sizeof(ap_list_item));
+        if (!items) {
+            show_error("Out of memory.");
+            break;
+        }
+        for (int vi = 0; vi < view.visible_count; vi++) {
+            items[vi].label = view.labels[vi];
+            items[vi].trailing_text = view.meta[vi];
+        }
+
+        ap_footer_item footer[] = {
+            {AP_BTN_A, "OPEN", true},
+            {AP_BTN_X, "MAP", false},
+            {AP_BTN_B, "BACK", false},
+        };
+
+        ap_list_opts opts = ap_list_default_opts(title, items, view.visible_count);
+        opts.footer = footer;
+        opts.footer_count = 3;
+        opts.status_bar = &g_status_bar;
+        opts.secondary_action_button = AP_BTN_X;
+        opts.initial_index = initial_idx < view.visible_count ? initial_idx : 0;
+        opts.visible_start_index = visible_start;
+
+        ap_list_result result;
+        int ret = ap_list(&opts, &result);
+        free(items);
+        if (ret == AP_CANCELLED)
+            break;
+
+        int sel = result.selected_index;
+        if (sel < 0 || sel >= view.visible_count)
+            break;
+
+        initial_idx = sel;
+        visible_start = result.visible_start_index;
+        int real_idx = view.visible_map[sel];
+        console_dir *console = &view.consoles[real_idx];
+        snprintf(selected_path, sizeof(selected_path), "%s", console->path);
+
+        bool open_picker = result.action == AP_ACTION_SECONDARY_TRIGGERED
+                        || !view.stats[real_idx].mapped;
+
+        if (open_picker) {
+            /* A picker call can change a sibling too, through a suffix
+             * default, so rebuild the whole view afterwards. */
+            bool changed = show_mapping_picker(console, console->tag);
+            if (!changed)
+                continue;
+
+            library_view rebuilt;
+            if (!library_view_build(&rebuilt, mode, &settings)) {
+                show_error("No ROM folders found.");
+                break;
+            }
+            library_view_free(&view);
+            view = rebuilt;
+            initial_idx = library_index_for_path(&view, selected_path);
+            visible_start = 0;
+            continue;
+        }
+
+        if (show_rom_list_screen(console, &settings, mode)) {
+            started_work = true;
+            break;
+        }
+    }
+
+    library_view_free(&view);
     free_settings(&settings);
-    return false;
+    return started_work;
 }
 
 /* ── API Usage screen ─────────────────────────────────────── */
@@ -1588,6 +1979,378 @@ static void clear_cheat_cache(void) {
 
 /* ── Settings screen ──────────────────────────────────────── */
 
+/* ── Settings: system mappings ────────────────────────────── */
+
+typedef enum {
+    MAP_ROW_SUFFIX_DEFAULTS,
+    MAP_ROW_FOLDER,
+    MAP_ROW_MISSING,   /* a saved override whose folder is gone */
+} map_row_kind;
+
+typedef struct {
+    map_row_kind kind;
+    int  console;                 /* index into consoles, for MAP_ROW_FOLDER */
+    char key[512];                /* folder key, for MAP_ROW_MISSING */
+    char tag[64];
+    bool unmapped;
+} map_row;
+
+static void folder_path_for_key(const char *key, char *buf, size_t buflen) {
+    char roms[PATH_MAX];
+    get_roms_path(roms, sizeof(roms));
+    snprintf(buf, buflen, "%s/%s", roms, key);
+}
+
+/* The suffix inside "Name (TAG)", or an empty string. */
+static void tag_from_key(const char *key, char *buf, size_t buflen) {
+    buf[0] = '\0';
+    const char *open = NULL, *close = NULL;
+    for (const char *p = key; *p; p++) {
+        if (*p == '(') open = p;
+        if (*p == ')') close = p;
+    }
+    if (!open || !close || close <= open + 1)
+        return;
+    size_t len = (size_t)(close - open - 1);
+    if (len >= buflen)
+        return;
+    memcpy(buf, open + 1, len);
+    buf[len] = '\0';
+}
+
+/* Suffix defaults, listing every suffix present on the card plus any the user
+ * has saved a default for, including suffixes with no folder left. */
+static bool show_suffix_defaults_screen(void) {
+    console_dir *consoles = NULL;
+    int console_count = scan_console_dirs(true, &consoles);
+    if (console_count < 0)
+        console_count = 0;
+
+    int capacity = console_count + systems_override_count() + 1;
+    char (*tags)[64] = malloc(sizeof(char[64]) * (size_t)capacity);
+    char (*labels)[192] = malloc(sizeof(char[192]) * (size_t)capacity);
+    char (*meta)[48] = malloc(sizeof(char[48]) * (size_t)capacity);
+    if (!tags || !labels || !meta) {
+        show_error("Out of memory.");
+        free(consoles); free(tags); free(labels); free(meta);
+        return false;
+    }
+
+    bool changed = false;
+    int initial_idx = 0;
+    int visible_start = 0;
+
+    for (;;) {
+        int count = 0;
+        for (int i = 0; i < console_count && count < capacity; i++) {
+            if (!consoles[i].tag[0])
+                continue;
+            bool seen = false;
+            for (int t = 0; t < count; t++) {
+                if (strcmp(tags[t], consoles[i].tag) == 0) { seen = true; break; }
+            }
+            if (!seen)
+                snprintf(tags[count++], 64, "%s", consoles[i].tag);
+        }
+        for (int i = 0; i < systems_override_count() && count < capacity; i++) {
+            sg_override ov;
+            if (!systems_override_at(i, &ov) || ov.is_folder || !ov.key)
+                continue;
+            bool seen = false;
+            for (int t = 0; t < count; t++) {
+                if (strcmp(tags[t], ov.key) == 0) { seen = true; break; }
+            }
+            if (!seen)
+                snprintf(tags[count++], 64, "%s", ov.key);
+        }
+
+        if (count <= 0) {
+            show_error("No ROM folder suffixes were found.");
+            break;
+        }
+
+        for (int i = 0; i < count; i++) {
+            sg_mapping mapping = systems_resolve(NULL, tags[i]);
+            const char *source =
+                mapping.source == MAPPING_USER_TAG ? "yours"
+              : mapping.source == MAPPING_BUILTIN  ? "bundled"
+              : "";
+            snprintf(labels[i], 192, "%s", tags[i]);
+            if (mapping.platform)
+                snprintf(meta[i], 48, "%s%s%s", mapping.platform->name,
+                         source[0] ? " · " : "", source);
+            else
+                snprintf(meta[i], 48, "unmapped");
+        }
+
+        ap_list_item *items = calloc((size_t)count, sizeof(ap_list_item));
+        if (!items) break;
+        for (int i = 0; i < count; i++) {
+            items[i].label = labels[i];
+            items[i].trailing_text = meta[i];
+        }
+
+        ap_footer_item footer[] = {
+            {AP_BTN_A, "EDIT", true},
+            {AP_BTN_B, "BACK", false},
+        };
+        ap_list_opts opts = ap_list_default_opts("Suffix defaults", items, count);
+        opts.footer = footer;
+        opts.footer_count = 2;
+        opts.status_bar = &g_status_bar;
+        opts.help_text =
+            "A suffix default applies to every folder with that suffix that has "
+            "no choice of its own. A folder's own mapping always wins.";
+        opts.initial_index = initial_idx < count ? initial_idx : 0;
+        opts.visible_start_index = visible_start;
+
+        ap_list_result result;
+        int ret = ap_list(&opts, &result);
+        free(items);
+        if (ret == AP_CANCELLED)
+            break;
+
+        int sel = result.selected_index;
+        if (sel < 0 || sel >= count)
+            break;
+        initial_idx = sel;
+        visible_start = result.visible_start_index;
+
+        if (show_mapping_picker(NULL, tags[sel]))
+            changed = true;
+    }
+
+    free(consoles);
+    free(tags);
+    free(labels);
+    free(meta);
+    return changed;
+}
+
+static bool show_system_mappings_screen(void) {
+    bool changed = false;
+    int initial_idx = 0;
+    int visible_start = 0;
+
+    for (;;) {
+        /* Hidden, disabled and empty folders are all listed here: this screen
+         * is where a user gets them back. */
+        console_dir *consoles = NULL;
+        int console_count = scan_console_dirs(true, &consoles);
+        if (console_count < 0)
+            console_count = 0;
+
+        int capacity = console_count + systems_override_count() + 1;
+        map_row *rows = malloc(sizeof(map_row) * (size_t)capacity);
+        char (*names)[512] = console_count > 0
+            ? malloc(sizeof(char[512]) * (size_t)console_count) : NULL;
+        char (*labels)[192] = malloc(sizeof(char[192]) * (size_t)capacity);
+        char (*meta)[48] = malloc(sizeof(char[48]) * (size_t)capacity);
+        if (!rows || !labels || !meta || (console_count > 0 && !names)) {
+            show_error("Out of memory.");
+            free(consoles); free(rows); free(names); free(labels); free(meta);
+            break;
+        }
+        if (console_count > 0)
+            build_console_menu_names(consoles, console_count, names);
+
+        int count = 0;
+        rows[count].kind = MAP_ROW_SUFFIX_DEFAULTS;
+        snprintf(labels[count], 192, "Suffix defaults");
+        snprintf(meta[count], 48, "%d saved", 0);
+        count++;
+
+        /* Unmapped folders first: those are the ones needing attention. */
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < console_count && count < capacity; i++) {
+                sg_mapping mapping = systems_resolve(consoles[i].path,
+                                                     consoles[i].tag);
+                bool unmapped = mapping.platform == NULL;
+                if (unmapped != (pass == 0))
+                    continue;
+
+                rows[count].kind = MAP_ROW_FOLDER;
+                rows[count].console = i;
+                rows[count].unmapped = unmapped;
+                snprintf(rows[count].tag, sizeof(rows[count].tag), "%s",
+                         consoles[i].tag);
+                rows[count].key[0] = '\0';
+                snprintf(labels[count], 192, "%s", names[i]);
+
+                const char *source =
+                    mapping.source == MAPPING_USER_FOLDER ? "folder"
+                  : mapping.source == MAPPING_USER_TAG    ? "suffix"
+                  : mapping.source == MAPPING_BUILTIN     ? "bundled"
+                  : "";
+                if (mapping.hidden && mapping.platform)
+                    snprintf(meta[count], 48, "hidden · %s", mapping.platform->name);
+                else if (mapping.hidden)
+                    snprintf(meta[count], 48, "hidden · unmapped");
+                else if (mapping.platform)
+                    snprintf(meta[count], 48, "%s · %s", mapping.platform->name,
+                             source);
+                else
+                    snprintf(meta[count], 48, "unmapped");
+                count++;
+            }
+        }
+
+        /* Overrides whose folder is gone, usually after a rename. They stay
+         * listed so they can be cleared. */
+        int saved_suffix_defaults = 0;
+        for (int i = 0; i < systems_override_count() && count < capacity; i++) {
+            sg_override ov;
+            if (!systems_override_at(i, &ov) || !ov.key)
+                continue;
+            if (!ov.is_folder) {
+                saved_suffix_defaults++;
+                continue;
+            }
+            bool present = false;
+            for (int c = 0; c < console_count; c++) {
+                char key[512];
+                if (systems_folder_key(consoles[c].path, key, sizeof(key))
+                    && strcmp(key, ov.key) == 0) {
+                    present = true;
+                    break;
+                }
+            }
+            if (present)
+                continue;
+
+            rows[count].kind = MAP_ROW_MISSING;
+            rows[count].console = -1;
+            rows[count].unmapped = false;
+            snprintf(rows[count].key, sizeof(rows[count].key), "%s", ov.key);
+            tag_from_key(ov.key, rows[count].tag, sizeof(rows[count].tag));
+            snprintf(labels[count], 192, "%s", ov.key);
+            snprintf(meta[count], 48, "folder missing");
+            count++;
+        }
+        snprintf(meta[0], 48, "%d saved", saved_suffix_defaults);
+
+        ap_list_item *items = calloc((size_t)count, sizeof(ap_list_item));
+        if (!items) {
+            free(consoles); free(rows); free(names); free(labels); free(meta);
+            break;
+        }
+        for (int i = 0; i < count; i++) {
+            items[i].label = labels[i];
+            items[i].trailing_text = meta[i];
+        }
+
+        ap_footer_item footer[] = {
+            {AP_BTN_A, "EDIT", true},
+            {AP_BTN_B, "BACK", false},
+        };
+        ap_list_opts opts = ap_list_default_opts("System Mappings", items, count);
+        opts.footer = footer;
+        opts.footer_count = 2;
+        opts.status_bar = &g_status_bar;
+        opts.help_text =
+            "Choose what each ROM folder holds. A folder with no platform is "
+            "listed first; scraping it needs a choice here. Hiding a folder "
+            "removes it from the library only, and keeps its platform.";
+        opts.initial_index = initial_idx < count ? initial_idx : 0;
+        opts.visible_start_index = visible_start;
+
+        ap_list_result result;
+        int ret = ap_list(&opts, &result);
+        free(items);
+
+        int sel = result.selected_index;
+        bool cancelled = ret == AP_CANCELLED || sel < 0 || sel >= count;
+        map_row row = cancelled ? (map_row){0} : rows[sel];
+        if (!cancelled) {
+            initial_idx = sel;
+            visible_start = result.visible_start_index;
+        }
+
+        char console_path[PATH_MAX] = "";
+        console_dir missing_console;
+        const console_dir *target = NULL;
+        if (!cancelled && row.kind == MAP_ROW_FOLDER) {
+            target = &consoles[row.console];
+            snprintf(console_path, sizeof(console_path), "%s", target->path);
+        }
+
+        bool clear_missing = false;
+        if (!cancelled && row.kind == MAP_ROW_MISSING) {
+            memset(&missing_console, 0, sizeof(missing_console));
+            folder_path_for_key(row.key, missing_console.path,
+                                sizeof(missing_console.path));
+            snprintf(missing_console.display, sizeof(missing_console.display),
+                     "%s", row.key);
+            snprintf(missing_console.tag, sizeof(missing_console.tag), "%s",
+                     row.tag);
+            clear_missing = true;
+        }
+
+        /* The list allocations are dead once a sub-screen opens: it can change
+         * the folders and overrides this pass was built from. */
+        free(consoles);
+        free(rows);
+        free(names);
+        free(labels);
+        free(meta);
+        if (cancelled)
+            break;
+
+        if (row.kind == MAP_ROW_SUFFIX_DEFAULTS) {
+            if (show_suffix_defaults_screen())
+                changed = true;
+            continue;
+        }
+
+        if (clear_missing) {
+            ap_footer_item confirm_footer[] = {
+                {AP_BTN_A, "CLEAR", true},
+                {AP_BTN_B, "KEEP", false},
+            };
+            char message[512];
+            snprintf(message, sizeof(message),
+                     "\"%s\" no longer exists.\n\nClear its saved mapping?",
+                     row.key);
+            ap_message_opts mopts = {.message = message,
+                                     .footer = confirm_footer,
+                                     .footer_count = 2};
+            ap_confirm_result confirm;
+            ap_confirmation(&mopts, &confirm);
+            if (!confirm.confirmed)
+                continue;
+            if (!ensure_mapping_edit_allowed())
+                continue;
+            if (systems_clear_folder(missing_console.path) != 0)
+                show_error(systems_last_error()
+                           ? systems_last_error()
+                           : "Could not clear the saved mapping.");
+            else
+                changed = true;
+            continue;
+        }
+
+        /* Re-scan for the selected folder: `target` pointed into freed memory. */
+        console_dir picked;
+        memset(&picked, 0, sizeof(picked));
+        console_dir *fresh = NULL;
+        int fresh_count = scan_console_dirs(true, &fresh);
+        for (int i = 0; i < fresh_count; i++) {
+            if (strcmp(fresh[i].path, console_path) == 0) {
+                picked = fresh[i];
+                break;
+            }
+        }
+        free(fresh);
+        if (!picked.path[0])
+            continue;
+
+        if (show_mapping_picker(&picked, picked.tag))
+            changed = true;
+    }
+
+    return changed;
+}
+
 static void show_settings_screen(void) {
     for (;;) {
         app_settings settings = load_settings();
@@ -1611,13 +2374,14 @@ static void show_settings_screen(void) {
         ap_option pass_opt = {.label = pass_display, .value = "edit"};
         ap_option art_opt = {.label = "...", .value = "edit"};
         ap_option manual_dir_opt = {.label = manual_dir_display, .value = "edit"};
+        ap_option mappings_opt = {.label = "...", .value = "edit"};
         ap_option clear_opt = {.label = "...", .value = "clear"};
         ap_option hidden_opts[2] = {
             {.label = "Off", .value = "0"},
             {.label = "On", .value = "1"},
         };
 
-        ap_options_item items[6] = {
+        ap_options_item items[7] = {
             {.label = "Username", .type = AP_OPT_CLICKABLE,
              .options = &user_opt, .option_count = 1, .selected_option = 0},
             {.label = "Password", .type = AP_OPT_CLICKABLE,
@@ -1626,6 +2390,8 @@ static void show_settings_screen(void) {
              .options = &art_opt, .option_count = 1, .selected_option = 0},
             {.label = "Manual download directory", .type = AP_OPT_CLICKABLE,
              .options = &manual_dir_opt, .option_count = 1, .selected_option = 0},
+            {.label = "System Mappings", .type = AP_OPT_CLICKABLE,
+             .options = &mappings_opt, .option_count = 1, .selected_option = 0},
             {.label = "Clear cheat cache", .type = AP_OPT_CLICKABLE,
              .options = &clear_opt, .option_count = 1, .selected_option = 0},
             {.label = "Include hidden/disabled/empty ROMs", .type = AP_OPT_STANDARD,
@@ -1642,7 +2408,7 @@ static void show_settings_screen(void) {
         ap_options_list_opts opts = {
             .title = "Settings",
             .items = items,
-            .item_count = 6,
+            .item_count = 7,
             .footer = footer,
             .footer_count = 3,
             .confirm_button = AP_BTN_START,
@@ -1663,14 +2429,15 @@ static void show_settings_screen(void) {
             case 1: edit_password(&settings); break;
             case 2: edit_artwork_options(&settings); break;
             case 3: edit_manual_download_dir(&settings); break;
-            case 4: clear_cheat_cache(); break;
+            case 4: show_system_mappings_screen(); break;
+            case 5: clear_cheat_cache(); break;
             }
             free_settings(&settings);
             continue;
         }
 
         /* START pressed: save show_hidden and exit */
-        settings.show_hidden = (result.items[5].selected_option == 1);
+        settings.show_hidden = (result.items[6].selected_option == 1);
         save_settings(&settings);
         queue_set_settings(&settings);
         free_settings(&settings);
@@ -1928,6 +2695,16 @@ void run_app(void) {
     if (!check_daemon_on_startup()) {
         free_settings(&settings);
         return;
+    }
+
+    /* A handheld user never sees stderr, so a problem with their saved
+     * mappings has to be said here. */
+    if (systems_warning()) {
+        char message[640];
+        snprintf(message, sizeof(message), "%s\n\nSettings > System Mappings "
+                 "shows what is in effect.", systems_warning());
+        show_warning(message);
+        systems_clear_warning();
     }
 
 #ifndef PLATFORM_MAC

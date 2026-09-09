@@ -52,7 +52,7 @@ endif
 .PHONY: all native mac run-mac run-native universal tg5040 tg5050 my355 \
 	package package-universal package-matrix package-tg5040 package-tg5050 package-my355 do-package \
 	deploy deploy-platform clean clean-all help check-credentials \
-	audit-systems audit-systems-inventory test-systems test \
+	audit-systems audit-systems-inventory test-systems test-scripts test \
 	build-git-static clean-git-static update-apostrophe \
 	setup-nextui-preview-cache clean-nextui-preview-cache
 
@@ -197,6 +197,7 @@ do-package:
 	@mkdir -p $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/resources/bin
 	@cp $(BIN_SRC) $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/
 	@cp launch.sh pak.json LICENSE $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/
+	@cp -a resources/. $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/resources/
 	@cp $(GIT_STATIC_CACHE)/git $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/resources/bin/
 	@cp $(GIT_STATIC_CACHE)/git-remote-https $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak/resources/bin/ 2>/dev/null || true
 	@if [ -n "$(LIB_SRC)" ] && [ -d "$(LIB_SRC)" ]; then \
@@ -206,6 +207,10 @@ do-package:
 	@mkdir -p $(DIST_DIR)/$(PLATFORM)
 	@rm -f $(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip
 	@cd $(BUILD_DIR)/$(PLATFORM)/$(PAK_NAME).pak && zip -r "$(CURDIR)/$(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip" . -x '.*'
+	@unzip -Z1 $(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip | grep -qx "resources/systems.json" \
+		|| { echo "Error: resources/systems.json is missing from the archive."; exit 1; }
+	@unzip -Z1 $(DIST_DIR)/$(PLATFORM)/$(PAK_NAME).pak.zip | grep -qx "resources/bin/git" \
+		|| { echo "Error: resources/bin/git is missing from the archive."; exit 1; }
 
 package: package-universal
 	@mkdir -p $(DIST_DIR)/all
@@ -273,11 +278,14 @@ deploy-platform:
 
 # ── Tests ───────────────────────────────────────────────────
 
-test: test-systems
+test: test-systems test-scripts
+
+test-scripts:
+	@python3 -m unittest discover -s tests -p 'test_*.py'
 
 test-systems: $(APOSTROPHE_DIR)/include/apostrophe.h
 	@mkdir -p $(BUILD_DIR)/tests
-	cc -std=gnu11 -O0 -g -Wall -Wextra -Wno-unused-parameter \
+	cc -std=gnu11 -O0 -g \
 		-DPLATFORM_MAC \
 		-Isrc $(COMMON_INCLUDES) \
 		-o $(BUILD_DIR)/tests/test_systems \
@@ -329,6 +337,7 @@ help:
 	@echo "  clean-git-static  Remove cached static git"
 	@echo "  test          Run the runnable regression checks"
 	@echo "  test-systems  Check catalog resolution, keys and failure handling"
+	@echo "  test-scripts  Check the audit and catalog generator offline"
 	@echo "  audit-systems  Audit suffix inventory and catalog coverage (NEXTUI_REPO=$(NEXTUI_REPO))"
 	@echo "  audit-systems-inventory  Discovery only; does not evaluate coverage"
 	@echo "  clean         Remove build artifacts"
