@@ -52,7 +52,7 @@ endif
 .PHONY: all native mac run-mac run-native universal tg5040 tg5050 my355 \
 	package package-universal package-matrix package-tg5040 package-tg5050 package-my355 do-package \
 	deploy deploy-platform clean clean-all help check-credentials \
-	audit-systems audit-systems-inventory \
+	audit-systems audit-systems-inventory test-systems test \
 	build-git-static clean-git-static update-apostrophe \
 	setup-nextui-preview-cache clean-nextui-preview-cache
 
@@ -271,6 +271,22 @@ deploy-platform:
 	$$ADB_CMD push "$(BUILD_DIR)/universal/$(PAK_NAME).pak" "$$PAK_ROOT/"; \
 	echo "Deploy complete."
 
+# ── Tests ───────────────────────────────────────────────────
+
+test: test-systems
+
+test-systems: $(APOSTROPHE_DIR)/include/apostrophe.h
+	@mkdir -p $(BUILD_DIR)/tests
+	cc -std=gnu11 -O0 -g -Wall -Wextra -Wno-unused-parameter \
+		-DPLATFORM_MAC \
+		-Isrc $(COMMON_INCLUDES) \
+		-o $(BUILD_DIR)/tests/test_systems \
+		tests/test_systems.c src/systems.c src/device.c \
+		third_party/cJSON/cJSON.c third_party/md5/md5.c $(wildcard third_party/miniz/*.c) \
+		-lm
+	@./$(BUILD_DIR)/tests/test_systems resources/systems.json \
+		tests/fixtures/baseline_mappings.json $(BUILD_DIR)/test-systems
+
 # ── System suffix audit ─────────────────────────────────────
 #
 # Override the NextUI checkout with NEXTUI_REPO=/path/to/NextUI.
@@ -311,6 +327,8 @@ help:
 	@echo "  deploy        Detect adb platform, package, and push"
 	@echo "  build-git-static  Build static git binary (cached)"
 	@echo "  clean-git-static  Remove cached static git"
+	@echo "  test          Run the runnable regression checks"
+	@echo "  test-systems  Check catalog resolution, keys and failure handling"
 	@echo "  audit-systems  Audit suffix inventory and catalog coverage (NEXTUI_REPO=$(NEXTUI_REPO))"
 	@echo "  audit-systems-inventory  Discovery only; does not evaluate coverage"
 	@echo "  clean         Remove build artifacts"

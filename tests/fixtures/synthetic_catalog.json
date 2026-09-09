@@ -1,0 +1,30 @@
+{
+  "comment": "Small catalog used by tests/test_systems.c. Covers a cheat-only platform (no ScreenScraper id), an artwork-only platform, and an ambiguous suffix with candidates and no bundled default.",
+  "schema": 1,
+  "platforms": [
+    {
+      "id": "cheatonly",
+      "name": "Cheats Only System",
+      "aliases": ["COS"],
+      "libretro_dir": "Test - Cheats Only"
+    },
+    {
+      "id": "artonly",
+      "name": "Artwork Only System",
+      "ss_id": 4242
+    },
+    {
+      "id": "bothsides",
+      "name": "Both Providers System",
+      "ss_id": 4243,
+      "libretro_dir": "Test - Both Providers"
+    }
+  ],
+  "tags": {
+    "ART": "artonly",
+    "BOTH": "bothsides"
+  },
+  "tag_candidates": {
+    "AMBIG": ["cheatonly", "artonly"]
+  }
+}

@@ -88,7 +88,11 @@ const char *get_sdcard_path(void) {
 
     const char *env = getenv("SDCARD_PATH");
     if (env && env[0]) {
-        sdcard_path_cached = env;
+        /* Copy it: the pointer getenv() returns is only valid until the next
+         * environment change. */
+        static char env_path[PATH_MAX];
+        snprintf(env_path, sizeof(env_path), "%s", env);
+        sdcard_path_cached = env_path;
         return sdcard_path_cached;
     }
 
