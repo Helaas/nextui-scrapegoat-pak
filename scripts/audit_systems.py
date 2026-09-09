@@ -935,6 +935,8 @@ class Catalog:
     platforms: dict[str, dict]
     tags: dict[str, str]
     tag_candidates: dict[str, list[str]]
+    no_target_reviewed: dict[str, str]
+    corrections: dict[str, str]
     path: Path
 
 
@@ -979,7 +981,14 @@ def load_catalog(problems: Problems) -> Catalog | None:
                              f"tag candidate {tag} -> {pid} references an "
                              "unknown platform")
                 return None
-    return Catalog(platforms, tags, candidates, CATALOG_PATH)
+    generated = data.get("generated")
+    def string_map(key: str) -> dict[str, str]:
+        if isinstance(generated, dict) and isinstance(generated.get(key), dict):
+            return {str(k): str(v) for k, v in generated[key].items()}
+        return {}
+
+    return Catalog(platforms, tags, candidates, string_map("no_target_reviewed"),
+                   string_map("corrections"), CATALOG_PATH)
 
 
 # ── Coverage rows ─────────────────────────────────────────────
@@ -1071,10 +1080,17 @@ def build_rows(sightings: list[PakSighting], entries: list[StoreEntry],
         platform = catalog.platforms.get(default_id) if (catalog and default_id) else None
 
         if catalog:
+            reviewed_no_target = catalog.no_target_reviewed.get(tag)
             if not default_id and not candidate_ids:
-                problems.add(GAP, tag,
-                             "the catalog offers neither a default platform nor "
-                             "reviewed candidates")
+                if reviewed_no_target:
+                    problems.add(NOTE, tag,
+                                 "reviewed as having no suitable catalog "
+                                 f"target: {reviewed_no_target} The folder "
+                                 "stays visible and mappable")
+                else:
+                    problems.add(GAP, tag,
+                                 "the catalog offers neither a default platform "
+                                 "nor reviewed candidates")
             screenscraper = provider_state(platform, "ss_id")
             cheats = provider_state(platform, "libretro_dir")
             if platform is None and candidate_ids:
@@ -1088,6 +1104,8 @@ def build_rows(sightings: list[PakSighting], entries: list[StoreEntry],
             status = "default mapping"
         elif candidate_ids:
             status = "folder selection required"
+        elif catalog.no_target_reviewed.get(tag):
+            status = "no target (reviewed)"
         else:
             status = "unmapped"
 
@@ -1219,6 +1237,17 @@ def render_report(rows: list[Row], problems: Problems, nextui_meta: dict,
             else entry.evidence,
         ]) + " |")
     lines.append("")
+
+    if catalog and catalog.corrections:
+        lines.append("## Corrections to the pre-catalog tables")
+        lines.append("")
+        lines.append("Associations the static tables in `src/systems.c` got "
+                     "wrong. Each was found by resolving the shipped "
+                     "ScreenScraper ID against the imported platform list.")
+        lines.append("")
+        for tag, detail in sorted(catalog.corrections.items()):
+            lines.append(f"- **`{tag}`** — {detail}")
+        lines.append("")
 
     # Reviewed target meaning
     lines.append("## Reviewed target meaning")

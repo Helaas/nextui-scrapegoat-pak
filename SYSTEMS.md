@@ -1,8 +1,6 @@
-# System Suffix Inventory
+# System Suffix Coverage
 
 **Status: COMPLETE**
-
-This run used `--inventory-only`: **coverage not evaluated**. It certifies discovery only and cannot replace the committed coverage report.
 
 ## Sources
 
@@ -15,76 +13,76 @@ This run used `--inventory-only`: **coverage not evaluated**. It certifies disco
   - fetched: 2026-09-09T21:02:31Z (cached)
   - sha256: `5643806aa8ca7d8d3ee5c67613789b3816a4bcd1e841ca70b26b2802e368136b`
   - entries: experimental_paks=4, paks=117, EMU=26
-- Catalog: not read
+- Catalog: `resources/systems.json` (250 platforms, 58 tag defaults, 5 candidate sets)
 
 ## Suffixes
 
 | Suffix | Source | Devices | Core | Evidence | Target meaning | Default | Candidates | ScreenScraper | Cheats | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `32X` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Sega 32X | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `3DO` | store:3DO@v1.1.0 | tg5040, tg5050 | - | store-install-rule | singular: 3DO Interactive Multiplayer | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `A2600` | nextui:extras | tg5040, tg5050 | `stella2014` | nextui skeleton | singular: Atari 2600 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `A5200` | nextui:extras | tg5040, tg5050 | `a5200` | nextui skeleton | singular: Atari 5200 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `A7800` | nextui:extras | tg5040, tg5050 | `prosystem` | nextui skeleton | singular: Atari 7800 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `A800` | store:A800@v0.4.2 | tg5040 | - | store-install-rule | multi: Atari 8-bit computers (400/800/XL/XE), Atari 5200 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `C128` | nextui:extras | tg5040, tg5050 | `vice_x128` | nextui skeleton | singular: Commodore 128 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `C64` | nextui:extras | tg5040, tg5050 | `vice_x64` | nextui skeleton | singular: Commodore 64 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `COLECO` | nextui:extras | tg5040, tg5050 | `gearcoleco` | nextui skeleton | singular: ColecoVision | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `CPC` | nextui:extras | tg5040, tg5050 | `cap32` | nextui skeleton | singular: Amstrad CPC | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `DC` | store:DC@0.5.0 | tg5040 | - | store-install-rule | singular: Dreamcast | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `DICE` | store:DICE@v1.0.0 | h700, my355, tg5040 | - | source-tree | singular: Arcade (discrete logic, pre-CPU) | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `EASYRPG` | store:EASYRPG@v1.2.1 | tg5040 | - | store-install-rule | singular: RPG Maker 2000/2003 games | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `FBN` | nextui:extras | tg5040, tg5050 | `fbneo` | nextui skeleton | singular: Arcade (FinalBurn Neo) | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `FC` | nextui:base | desktop, tg5040, tg5050 | `fceumm` | nextui skeleton | singular: Nintendo Entertainment System / Famicom | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `FDS` | nextui:extras | tg5040, tg5050 | `fceumm` | nextui skeleton | singular: Famicom Disk System | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `GB` | nextui:base | desktop, tg5040, tg5050 | `gambatte` | nextui skeleton | singular: Game Boy | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `GBA` | nextui:base | desktop, tg5040, tg5050 | `gpsp` | nextui skeleton | singular: Game Boy Advance | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `GBC` | nextui:base | desktop, tg5040, tg5050 | `gambatte` | nextui skeleton | singular: Game Boy Color | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `GG` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Game Gear | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `GPGX` | store:GPGX@v1.0.0 | my355, tg5040, tg5050 | - | packaging-rule | multi: Mega Drive / Genesis, Master System, Game Gear, SG-1000, Mega-CD / Sega CD | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `GW` | store:GW@v1.0.0 | tg5040 | - | source-tree | singular: Game & Watch (MADrigal simulators) | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `INTV` | store:INTV@v0.0.0 | tg5040 | - | reviewed | singular: Intellivision | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `J2ME` | store:J2ME@v1.6.1 | h700, my355, tg5040, tg5050 | - | store-install-rule | singular: Java ME (J2ME) mobile games | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `JAGUAR` | store:JAGUAR@v1.1.0 | tg5040, tg5050 | - | store-install-rule | singular: Atari Jaguar | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `LYNX` | nextui:extras | tg5040, tg5050 | `handy` | nextui skeleton | singular: Atari Lynx | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `MD` | nextui:base | desktop, tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Mega Drive / Genesis | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `MGBA` | nextui:extras | tg5040, tg5050 | `mgba` | nextui skeleton | singular: Game Boy Advance | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `MKXPZ` | store:MKXPZ@v0.6.7 (experimental) | tg5040, tg5050 | - | store-install-rule | singular: RPG Maker XP/VX/VX Ace games | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `MSX` | nextui:extras | tg5040, tg5050 | `bluemsx` | nextui skeleton | singular: MSX | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `N64` | store:N64@0.6.3 | tg5040, tg5050 | - | store-install-rule | singular: Nintendo 64 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `NDS` | store:NDS@0.12.0 | tg5040, tg5050 | - | store-install-rule | singular: Nintendo DS | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `NEOCD` | store:NEOCD@v1.0.0 | h700, my355, tg5040 | - | source-tree | singular: Neo Geo CD | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `NGP` | nextui:extras | tg5040, tg5050 | `race` | nextui skeleton | singular: Neo Geo Pocket | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `NGPC` | nextui:extras | tg5040, tg5050 | `race` | nextui skeleton | singular: Neo Geo Pocket Color | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `O2` | store:O2@v1.0.0 | h700, my355, tg5040 | - | source-tree | singular: Magnavox Odyssey² / Philips Videopac | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `P8` | nextui:extras | tg5040, tg5050 | `fake08` | nextui skeleton | singular: PICO-8 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PCE` | nextui:extras | tg5040, tg5050 | `mednafen_pce_fast` | nextui skeleton | singular: PC Engine / TurboGrafx-16 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PET` | nextui:extras | tg5040, tg5050 | `vice_xpet` | nextui skeleton | singular: Commodore PET | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PICO` | store:PICO@0.7.0 | rg35xxplus, tg5040, tg5050 | - | store-install-rule | singular: PICO-8 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PKM` | nextui:extras | tg5040, tg5050 | `pokemini` | nextui skeleton | singular: Pokémon Mini | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PLUS4` | nextui:extras | tg5040, tg5050 | `vice_xplus4` | nextui skeleton | singular: Commodore Plus/4 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PORTS` | store:PORTS@2.14.0 | tg5040 | - | packaging-rule | open-ended | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PRBOOM` | nextui:extras | tg5040, tg5050 | `prboom` | nextui skeleton | singular: Doom engine games (id Software IWAD/PWAD) | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PS` | nextui:base | desktop, tg5040, tg5050 | `pcsx_rearmed` | nextui skeleton | singular: PlayStation | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PSP` | store:PSP@6.2.0 | tg5040, tg5050 | - | store-install-rule | singular: PlayStation Portable | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `PUAE` | nextui:extras | tg5040, tg5050 | `puae2021` | nextui skeleton | singular: Commodore Amiga | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SCUMMVM` | store:ScummVM@0.3.0 | tg5040 | - | reviewed | singular: ScummVM point-and-click adventures | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SEGACD` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Mega-CD / Sega CD | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SFC` | nextui:base | desktop, tg5040, tg5050 | `snes9x` | nextui skeleton | singular: Super Famicom / SNES | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SG1000` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: SG-1000 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SGB` | nextui:extras | tg5040, tg5050 | `mgba` | nextui skeleton | singular: Game Boy (Super Game Boy) | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SGX` | store:SGX@v1.0.0 | h700, my355, tg5040 | - | source-tree | singular: PC Engine SuperGrafx | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SMS` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Master System | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SMSU` | store:SMSU@v1.1.1 | tg5040 | - | source-tree | singular: Mega Drive / Genesis (MSU-MD) | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SS` | store:SS@1.9.1 | tg5040, tg5050 | - | store-install-rule | singular: Sega Saturn | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SUPA` | nextui:extras | tg5040, tg5050 | `mednafen_supafaust` | nextui skeleton | singular: Super Famicom / SNES | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `SWAN` | store:SWAN@v1.0.0 | h700 | - | store-install-rule | singular: PlayStation | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `ScummVM` | store:ScummVM@0.3.0 | tg5040 | - | reviewed | singular: ScummVM point-and-click adventures | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `TIC` | store:TIC@0.3.0 | tg5040 | - | store-install-rule | singular: TIC-80 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `VB` | nextui:extras | tg5040, tg5050 | `mednafen_vb` | nextui skeleton | singular: Virtual Boy | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `VIC` | nextui:extras | tg5040, tg5050 | `vice_xvic` | nextui skeleton | singular: VIC-20 | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `WSC` | store:WSC@v1.0.0 | tg5040, tg5050 | - | source-tree | multi: WonderSwan, WonderSwan Color | - | - | coverage not evaluated | coverage not evaluated | inventory only |
-| `ZQUEST` | store:ZQUEST@v1.0.0 | tg5040 | - | source-tree | singular: Zelda Classic quests (v2.10-compatible) | - | - | coverage not evaluated | coverage not evaluated | inventory only |
+| `32X` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Sega 32X | sega32x | - | supported | supported | default mapping |
+| `3DO` | store:3DO@v1.1.0 | tg5040, tg5050 | - | store-install-rule | singular: 3DO Interactive Multiplayer | threedo | - | supported | verified unavailable | default mapping |
+| `A2600` | nextui:extras | tg5040, tg5050 | `stella2014` | nextui skeleton | singular: Atari 2600 | atari2600 | - | supported | supported | default mapping |
+| `A5200` | nextui:extras | tg5040, tg5050 | `a5200` | nextui skeleton | singular: Atari 5200 | atari5200 | - | supported | supported | default mapping |
+| `A7800` | nextui:extras | tg5040, tg5050 | `prosystem` | nextui skeleton | singular: Atari 7800 | atari7800 | - | supported | supported | default mapping |
+| `A800` | store:A800@v0.4.2 | tg5040 | - | store-install-rule | multi: Atari 8-bit computers (400/800/XL/XE), Atari 5200 | atari8bit | atari8bit, atari5200 | supported | supported | default mapping |
+| `C128` | nextui:extras | tg5040, tg5050 | `vice_x128` | nextui skeleton | singular: Commodore 128 | - | commodore64 | not verified | not verified | folder selection required |
+| `C64` | nextui:extras | tg5040, tg5050 | `vice_x64` | nextui skeleton | singular: Commodore 64 | commodore64 | - | supported | not verified | default mapping |
+| `COLECO` | nextui:extras | tg5040, tg5050 | `gearcoleco` | nextui skeleton | singular: ColecoVision | colecovision | - | supported | supported | default mapping |
+| `CPC` | nextui:extras | tg5040, tg5050 | `cap32` | nextui skeleton | singular: Amstrad CPC | amstradcpc | - | supported | verified unavailable | default mapping |
+| `DC` | store:DC@0.5.0 | tg5040 | - | store-install-rule | singular: Dreamcast | dreamcast | - | supported | supported | default mapping |
+| `DICE` | store:DICE@v1.0.0 | h700, my355, tg5040 | - | source-tree | singular: Arcade (discrete logic, pre-CPU) | - | mame | not verified | not verified | folder selection required |
+| `EASYRPG` | store:EASYRPG@v1.2.1 | tg5040 | - | store-install-rule | singular: RPG Maker 2000/2003 games | easyrpg | - | supported | verified unavailable | default mapping |
+| `FBN` | nextui:extras | tg5040, tg5050 | `fbneo` | nextui skeleton | singular: Arcade (FinalBurn Neo) | mame | - | supported | supported | default mapping |
+| `FC` | nextui:base | desktop, tg5040, tg5050 | `fceumm` | nextui skeleton | singular: Nintendo Entertainment System / Famicom | nes | - | supported | supported | default mapping |
+| `FDS` | nextui:extras | tg5040, tg5050 | `fceumm` | nextui skeleton | singular: Famicom Disk System | famicomdisksystem | - | supported | supported | default mapping |
+| `GB` | nextui:base | desktop, tg5040, tg5050 | `gambatte` | nextui skeleton | singular: Game Boy | gameboy | - | supported | supported | default mapping |
+| `GBA` | nextui:base | desktop, tg5040, tg5050 | `gpsp` | nextui skeleton | singular: Game Boy Advance | gameboyadvance | - | supported | supported | default mapping |
+| `GBC` | nextui:base | desktop, tg5040, tg5050 | `gambatte` | nextui skeleton | singular: Game Boy Color | gameboycolor | - | supported | supported | default mapping |
+| `GG` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Game Gear | gamegear | - | supported | supported | default mapping |
+| `GPGX` | store:GPGX@v1.0.0 | my355, tg5040, tg5050 | - | packaging-rule | multi: Mega Drive / Genesis, Master System, Game Gear, SG-1000, Mega-CD / Sega CD | - | megadrive, mastersystem, gamegear, sg1000, segacd | not verified | not verified | folder selection required |
+| `GW` | store:GW@v1.0.0 | tg5040 | - | source-tree | singular: Game & Watch (MADrigal simulators) | gameandwatch | - | supported | verified unavailable | default mapping |
+| `INTV` | store:INTV@v0.0.0 | tg5040 | - | reviewed | singular: Intellivision | intellivision | - | supported | supported | default mapping |
+| `J2ME` | store:J2ME@v1.6.1 | h700, my355, tg5040, tg5050 | - | store-install-rule | singular: Java ME (J2ME) mobile games | j2me | - | supported | verified unavailable | default mapping |
+| `JAGUAR` | store:JAGUAR@v1.1.0 | tg5040, tg5050 | - | store-install-rule | singular: Atari Jaguar | jaguar | - | supported | supported | default mapping |
+| `LYNX` | nextui:extras | tg5040, tg5050 | `handy` | nextui skeleton | singular: Atari Lynx | lynx | - | supported | supported | default mapping |
+| `MD` | nextui:base | desktop, tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Mega Drive / Genesis | megadrive | - | supported | supported | default mapping |
+| `MGBA` | nextui:extras | tg5040, tg5050 | `mgba` | nextui skeleton | singular: Game Boy Advance | gameboyadvance | - | supported | supported | default mapping |
+| `MKXPZ` | store:MKXPZ@v0.6.7 (experimental) | tg5040, tg5050 | - | store-install-rule | singular: RPG Maker XP/VX/VX Ace games | - | - | not verified | not verified | no target (reviewed) |
+| `MSX` | nextui:extras | tg5040, tg5050 | `bluemsx` | nextui skeleton | singular: MSX | msx | - | supported | supported | default mapping |
+| `N64` | store:N64@0.6.3 | tg5040, tg5050 | - | store-install-rule | singular: Nintendo 64 | nintendo64 | - | supported | supported | default mapping |
+| `NDS` | store:NDS@0.12.0 | tg5040, tg5050 | - | store-install-rule | singular: Nintendo DS | nintendods | - | supported | supported | default mapping |
+| `NEOCD` | store:NEOCD@v1.0.0 | h700, my355, tg5040 | - | source-tree | singular: Neo Geo CD | neogeocd | - | supported | verified unavailable | default mapping |
+| `NGP` | nextui:extras | tg5040, tg5050 | `race` | nextui skeleton | singular: Neo Geo Pocket | neogeopocket | - | supported | verified unavailable | default mapping |
+| `NGPC` | nextui:extras | tg5040, tg5050 | `race` | nextui skeleton | singular: Neo Geo Pocket Color | neogeopocketcolor | - | supported | verified unavailable | default mapping |
+| `O2` | store:O2@v1.0.0 | h700, my355, tg5040 | - | source-tree | singular: Magnavox Odyssey² / Philips Videopac | odyssey2 | - | supported | verified unavailable | default mapping |
+| `P8` | nextui:extras | tg5040, tg5050 | `fake08` | nextui skeleton | singular: PICO-8 | pico8 | - | supported | verified unavailable | default mapping |
+| `PCE` | nextui:extras | tg5040, tg5050 | `mednafen_pce_fast` | nextui skeleton | singular: PC Engine / TurboGrafx-16 | pcengine | - | supported | supported | default mapping |
+| `PET` | nextui:extras | tg5040, tg5050 | `vice_xpet` | nextui skeleton | singular: Commodore PET | commodorepet | - | supported | verified unavailable | default mapping |
+| `PICO` | store:PICO@0.7.0 | rg35xxplus, tg5040, tg5050 | - | store-install-rule | singular: PICO-8 | pico8 | - | supported | verified unavailable | default mapping |
+| `PKM` | nextui:extras | tg5040, tg5050 | `pokemini` | nextui skeleton | singular: Pokémon Mini | pokemonmini | - | supported | verified unavailable | default mapping |
+| `PLUS4` | nextui:extras | tg5040, tg5050 | `vice_xplus4` | nextui skeleton | singular: Commodore Plus/4 | commodoreplus4 | - | supported | verified unavailable | default mapping |
+| `PORTS` | store:PORTS@2.14.0 | tg5040 | - | packaging-rule | open-ended | - | - | not verified | not verified | no target (reviewed) |
+| `PRBOOM` | nextui:extras | tg5040, tg5050 | `prboom` | nextui skeleton | singular: Doom engine games (id Software IWAD/PWAD) | prboom | - | supported | supported | default mapping |
+| `PS` | nextui:base | desktop, tg5040, tg5050 | `pcsx_rearmed` | nextui skeleton | singular: PlayStation | playstation | - | supported | supported | default mapping |
+| `PSP` | store:PSP@6.2.0 | tg5040, tg5050 | - | store-install-rule | singular: PlayStation Portable | psp | - | supported | supported | default mapping |
+| `PUAE` | nextui:extras | tg5040, tg5050 | `puae2021` | nextui skeleton | singular: Commodore Amiga | amiga | - | supported | verified unavailable | default mapping |
+| `SCUMMVM` | store:ScummVM@0.3.0 | tg5040 | - | reviewed | singular: ScummVM point-and-click adventures | scummvm | - | supported | verified unavailable | default mapping |
+| `SEGACD` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Mega-CD / Sega CD | segacd | - | supported | supported | default mapping |
+| `SFC` | nextui:base | desktop, tg5040, tg5050 | `snes9x` | nextui skeleton | singular: Super Famicom / SNES | snes | - | supported | supported | default mapping |
+| `SG1000` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: SG-1000 | sg1000 | - | supported | supported | default mapping |
+| `SGB` | nextui:extras | tg5040, tg5050 | `mgba` | nextui skeleton | singular: Game Boy (Super Game Boy) | gameboy | - | supported | supported | default mapping |
+| `SGX` | store:SGX@v1.0.0 | h700, my355, tg5040 | - | source-tree | singular: PC Engine SuperGrafx | supergrafx | - | supported | supported | default mapping |
+| `SMS` | nextui:extras | tg5040, tg5050 | `picodrive` | nextui skeleton | singular: Master System | mastersystem | - | supported | supported | default mapping |
+| `SMSU` | store:SMSU@v1.1.1 | tg5040 | - | source-tree | singular: Mega Drive / Genesis (MSU-MD) | megadrive | - | supported | supported | default mapping |
+| `SS` | store:SS@1.9.1 | tg5040, tg5050 | - | store-install-rule | singular: Sega Saturn | saturn | - | supported | supported | default mapping |
+| `SUPA` | nextui:extras | tg5040, tg5050 | `mednafen_supafaust` | nextui skeleton | singular: Super Famicom / SNES | snes | - | supported | supported | default mapping |
+| `SWAN` | store:SWAN@v1.0.0 | h700 | - | store-install-rule | singular: PlayStation | playstation | - | supported | supported | default mapping |
+| `ScummVM` | store:ScummVM@0.3.0 | tg5040 | - | reviewed | singular: ScummVM point-and-click adventures | scummvm | - | supported | verified unavailable | default mapping |
+| `TIC` | store:TIC@0.3.0 | tg5040 | - | store-install-rule | singular: TIC-80 | tic80 | - | supported | supported | default mapping |
+| `VB` | nextui:extras | tg5040, tg5050 | `mednafen_vb` | nextui skeleton | singular: Virtual Boy | virtualboy | - | supported | verified unavailable | default mapping |
+| `VIC` | nextui:extras | tg5040, tg5050 | `vice_xvic` | nextui skeleton | singular: VIC-20 | vic20 | - | supported | verified unavailable | default mapping |
+| `WSC` | store:WSC@v1.0.0 | tg5040, tg5050 | - | source-tree | multi: WonderSwan, WonderSwan Color | - | wonderswan, wonderswancolor | not verified | not verified | folder selection required |
+| `ZQUEST` | store:ZQUEST@v1.0.0 | tg5040 | - | source-tree | singular: Zelda Classic quests (v2.10-compatible) | - | - | not verified | not verified | no target (reviewed) |
 
 ## Pak Store emulator releases
 
@@ -116,6 +114,14 @@ This run used `--inventory-only`: **coverage not evaluated**. It certifies disco
 | TIC | `rH6cY9zM2g` | 0.3.0 | `TIC.pak.zip` | `0fb83c6e69d1` | `TIC` | store-install-rule: the Pak Store extracts a non-.pakz EMU release into `Emus/<device>/<storefront name>.pak`, so TIC.pak.zip installs `TIC.pak` (LoveRetro/nextui-pak-store utils/functions.go@d234b873 UnzipPakArchive); corroborated by amayer5125/nextui-tic-80-pak@0fb83c6e69d1 (0.3.0) |
 | WSC | `UTRIL9C3F1` | v1.0.0 | `WSC.pak.zip` | `80766a22450f` | `WSC` | source-tree: alecrem/Trimui-Brick-WSC@80766a22450f (v1.0.0) commits 1 emulator pak directory |
 | ZQUEST | `qM2cH6zW1r` | v1.0.0 | `ZQUEST.pakz` | `7d7519aad66f` | `ZQUEST` | source-tree: cobaltgit/Zelda-Classic-MinUI@7d7519aad66f (v1.0.0) commits 1 emulator pak directory |
+
+## Corrections to the pre-catalog tables
+
+Associations the static tables in `src/systems.c` got wrong. Each was found by resolving the shipped ScreenScraper ID against the imported platform list.
+
+- **`C128`** — was ScreenScraper 87, which is the Amstrad GX4000. ScreenScraper has no Commodore 128 platform, so the suffix now offers Commodore 64 as a candidate instead of carrying a wrong default.
+- **`COLECO`** — was ScreenScraper 60, which is PlayStation 4. ColecoVision is 48. Every COLECO scrape made against the old table queried the wrong platform.
+- **`MSX`** — was ScreenScraper 62, which is PS Vita. MSX is 113.
 
 ## Reviewed target meaning
 
@@ -319,9 +325,13 @@ What each suffix targets, and the evidence it rests on. Nothing here is inferred
 
 ## Findings
 
-### Informational (1)
+### Informational (5)
 
+- **MKXPZ** — reviewed as having no suitable catalog target: mkxp-z runs RPG Maker XP/VX/VX Ace projects; neither provider catalogues them as a platform. The folder stays visible and mappable
+- **PORTS** — reviewed as having no suitable catalog target: PortMaster installs user-chosen native game ports; the content is open-ended, so no single platform applies. The folder stays visible and mappable
 - **PORTS** — reviewed as open-ended content with no single platform: a documented limit, not an unresolved decision. PortMaster installs native game ports chosen by the user. The content is open-ended, so no platform can be assigned to the suffix. Open-ended content is not evidence that none of the games are scrapeable, and PORTS must not be hidden by default.
+- **SUPERGRAFX** — catalog alias with no currently observed pak; retained, informational only
+- **ZQUEST** — reviewed as having no suitable catalog target: Zelda Classic quests are user-authored content with no platform entry at either provider. The folder stays visible and mappable
 
 ## Summary
 
@@ -331,14 +341,14 @@ What each suffix targets, and the evidence it rests on. Nothing here is inferred
 - Store releases with confirmed installed suffixes: 26 of 26
 - Suffixes needing folder selection (multi-system): 3
 - Suffixes reviewed as open-ended content: 1
-- Unambiguous defaults: 0
-- Requiring folder selection: 0
-- ScreenScraper supported: 0
-- Cheat databases supported: 0
+- Unambiguous defaults: 57
+- Requiring folder selection: 4
+- ScreenScraper supported: 57
+- Cheat databases supported: 37
 - Incomplete sources: 0
 - Unresolved decisions: 0
 - Missing mapping decisions: 0
 
 Recognising a suffix name is not coverage, and user overrides on a device cannot close a catalog gap.
 
-Generated by `scripts/audit_systems.py` at 2026-09-09T21:13:05Z; exit code 0.
+Generated by `scripts/audit_systems.py` at 2026-09-09T21:18:47Z; exit code 0.
