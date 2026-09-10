@@ -113,6 +113,19 @@ void get_roms_path(char *buf, size_t buflen);
 void get_cheats_path(char *buf, size_t buflen);
 void get_cheat_repo_path(char *buf, size_t buflen);
 void get_settings_path(char *buf, size_t buflen);
+void get_system_overrides_path(char *buf, size_t buflen);
+
+/* Create a directory and every missing parent. */
+void ensure_dir_exists(const char *path);
+
+/* Absolute path of the running executable, with symlinks resolved.
+ * launch.sh chdirs into the pak directory, so resources must be found
+ * relative to the executable rather than the working directory.
+ * Returns 0 on success, -1 when the platform API fails or buflen is short. */
+int get_executable_path(char *buf, size_t buflen);
+
+/* Directory containing the running executable. Returns 0 on success. */
+int get_executable_dir(char *buf, size_t buflen);
 
 /* ── Scanning ─────────────────────────────────────────────────── */
 

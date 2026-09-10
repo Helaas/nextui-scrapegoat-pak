@@ -39,3 +39,7 @@ vendor/*
 *.tmp
 *.log
 nextui-scrapegoat-pak
+
+# Python bytecode
+__pycache__/
+*.pyc

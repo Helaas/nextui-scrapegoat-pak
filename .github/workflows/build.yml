@@ -1,0 +1,104 @@
+name: Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      SCREENSCRAPER_DEV_ID:
+        required: true
+      SCREENSCRAPER_DEV_PASSWORD:
+        required: true
+    outputs:
+      version:
+        description: Version string read from pak.json
+        value: ${{ jobs.universal.outputs.version }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Regression checks
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install native test dependencies
+        run: brew install sdl2 sdl2_ttf sdl2_image curl pkg-config
+      - name: Run regression checks
+        run: |
+          curl_prefix="$(brew --prefix curl)"
+          export PKG_CONFIG_PATH="$curl_prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+          make -s test
+
+  universal:
+    name: Unified device binary (ScrapeGoat.pak.zip)
+    needs: tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Validate release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          version="$(jq -er '.version | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' pak.json)"
+          test "$(jq -er .release_filename pak.json)" = ScrapeGoat.pak.zip
+          jq -e --arg v "$version" '.changelog[$v] | type == "string" and length > 0' pak.json >/dev/null
+          grep -Fx "#define SS_SOFT_NAME  \"ScrapeGoat-$version\"" src/screenscraper.h
+          grep -Fx "#define SS_USER_AGENT \"ScrapeGoat/${version#v}\"" src/screenscraper.h
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache third-party builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/git-static
+            build/third_party/sources
+            build/third_party/tg5040/openssl/install
+            build/third_party/tg5040/curl/install
+          key: ${{ runner.os }}-${{ runner.arch }}-deps-${{ hashFiles('Makefile', 'ports/tg5040/Makefile', 'scripts/build_third_party.sh', 'scripts/build-git-static.sh') }}
+
+      # PR builds exercise packaging without embedding developer credentials.
+      - name: Build and package
+        env:
+          SCREENSCRAPER_DEV_ID: ${{ github.event_name == 'pull_request' && 'ci-placeholder' || secrets.SCREENSCRAPER_DEV_ID }}
+          SCREENSCRAPER_DEV_PASSWORD: ${{ github.event_name == 'pull_request' && 'ci-placeholder' || secrets.SCREENSCRAPER_DEV_PASSWORD }}
+        run: make -s package
+
+      - name: Verify and summarize package
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          artifact=build/release/all/ScrapeGoat.pak.zip
+          for entry in scrapegoat launch.sh pak.json resources/systems.json resources/bin/git resources/bin/git-remote-https lib/cacert.pem; do
+            unzip -p "$artifact" "$entry" | cmp - "build/universal/ScrapeGoat.pak/$entry"
+          done
+          unzip -p "$artifact" pak.json | cmp - pak.json
+          {
+            echo "### ScrapeGoat $VERSION"
+            echo '```'
+            unzip -Z1 "$artifact" | sort
+            sha256sum build/universal/scrapegoat "$artifact"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload ScrapeGoat.pak.zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScrapeGoat-pak-zip
+          path: build/release/all/ScrapeGoat.pak.zip
+          if-no-files-found: error

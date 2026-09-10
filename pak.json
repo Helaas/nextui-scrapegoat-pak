@@ -1,12 +1,13 @@
 {
   "name": "ScrapeGoat",
-  "version": "v2.2.0",
+  "version": "v2.3.0",
   "type": "TOOL",
   "description": "Scrape artwork and manuals from ScreenScraper.fr and download cheats from Libretro for your ROM library.",
   "author": "Helaas",
   "repo_url": "https://github.com/Helaas/nextui-scrapegoat-pak",
-  "release_filename": "ScrapeGoat.pakz",
+  "release_filename": "ScrapeGoat.pak.zip",
   "changelog": {
+    "v2.3.0": "Adds per-folder scraping platforms and suffix defaults, with a compact System Mappings screen. Multi-system suffixes such as GPGX can map each folder independently, and unknown folders stay visible until mapped. Preserves mapping choices and queued cheat targets across updates and background handoff. Fixes COLECO scraping PlayStation 4 artwork and MSX scraping PS Vita artwork, and adds cheat databases for SG-1000 and PrBoom. Ships one ScrapeGoat.pak.zip for tg5040, tg5050, my355, and h700, with automated releases and an evidence-based suffix coverage report.",
     "v2.2.0": "Fixes incorrect colors with NextUI's RGBA theme format.",
     "v2.1.0": "Adds PDF manual downloads with configurable storage, background queue handoff and resume, clearer quit behavior, smarter cheat-file selection, and daemon-safe artwork scraping.",
     "v2.0.0": "New Apostrophe UI with queue/progress tracking, existing-file overviews, Miyoo Flip (my355) support, and can now scrape Sega Saturn.",
@@ -17,6 +18,7 @@
   "platforms": [
     "tg5040",
     "tg5050",
-    "my355"
+    "my355",
+    "h700"
   ]
 }

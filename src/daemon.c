@@ -8,6 +8,7 @@
 
 #include "daemon.h"
 #include "screenscraper.h"
+#include "systems.h"
 #include "cJSON.h"
 
 #include <errno.h>
@@ -153,6 +154,7 @@ static int serialize_queue(const char *path, const queue_item *items, int count)
         cJSON_AddStringToObject(obj, "system_display", it->system_display);
         cJSON_AddStringToObject(obj, "console_path", it->console_path);
         cJSON_AddNumberToObject(obj, "system_id", it->system_id);
+        cJSON_AddStringToObject(obj, "cheat_dir", it->cheat_dir);
         cJSON_AddStringToObject(obj, "status", status_to_str(it->status));
         cJSON_AddStringToObject(obj, "error_msg", it->error_msg);
         cJSON_AddBoolToObject(obj, "force", it->force);
@@ -234,12 +236,24 @@ static int deserialize_queue(const char *path, queue_item *out, int max_items) {
             snprintf(it->console_path, sizeof(it->console_path), "%s", v->valuestring);
         if ((v = cJSON_GetObjectItem(obj, "system_id")) && cJSON_IsNumber(v))
             it->system_id = (int)v->valuedouble;
+        bool invalid_cheat_dir = false;
+        if ((v = cJSON_GetObjectItem(obj, "cheat_dir"))) {
+            invalid_cheat_dir = !cJSON_IsString(v)
+                || (v->valuestring[0] && !systems_valid_provider_dir(v->valuestring));
+            if (!invalid_cheat_dir)
+                snprintf(it->cheat_dir, sizeof(it->cheat_dir), "%s", v->valuestring);
+        }
         if ((v = cJSON_GetObjectItem(obj, "status")) && cJSON_IsString(v))
             it->status = str_to_status(v->valuestring);
         if ((v = cJSON_GetObjectItem(obj, "error_msg")) && cJSON_IsString(v))
             snprintf(it->error_msg, sizeof(it->error_msg), "%s", v->valuestring);
         if ((v = cJSON_GetObjectItem(obj, "force")) && cJSON_IsBool(v))
             it->force = cJSON_IsTrue(v);
+        if (it->type == QUEUE_TYPE_CHEAT && invalid_cheat_dir) {
+            it->status = QUEUE_ERROR;
+            snprintf(it->error_msg, sizeof(it->error_msg),
+                     "Saved cheat database name is invalid");
+        }
     }
 
     cJSON_Delete(arr);
@@ -553,10 +567,23 @@ int daemon_main(int ready_fd) {
     /* Enable headless mode for JPEG conversion */
     ss_set_headless(true);
 
+    /* Mappings decide every job's provider target, so load them before the
+     * queue is restored or any worker starts. */
+    if (systems_init() != 0) {
+        const char *reason = systems_last_error();
+        fprintf(stderr, "scrapegoat-daemon: %s\n",
+                reason ? reason : "no platform catalog");
+        flock(lock_fd, LOCK_UN);
+        close(lock_fd);
+        daemon_report_ready(ready_fd, false);
+        return 1;
+    }
+
     /* Load queue from disk */
     queue_item *items = calloc(QUEUE_MAX_ITEMS, sizeof(queue_item));
     if (!items) {
         fprintf(stderr, "scrapegoat-daemon: out of memory\n");
+        systems_shutdown();
         flock(lock_fd, LOCK_UN);
         close(lock_fd);
         daemon_report_ready(ready_fd, false);
@@ -570,6 +597,7 @@ int daemon_main(int ready_fd) {
     if (item_count <= 0) {
         fprintf(stderr, "scrapegoat-daemon: no items to process\n");
         free(items);
+        systems_shutdown();
         flock(lock_fd, LOCK_UN);
         close(lock_fd);
         daemon_report_ready(ready_fd, false);
@@ -635,6 +663,7 @@ int daemon_main(int ready_fd) {
     free(snap);
 
     queue_shutdown();
+    systems_shutdown();
 
     /* Clean up daemon files (keep queue.json for the app to read) */
     {

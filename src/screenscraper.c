@@ -1001,11 +1001,17 @@ run_result scrape_console(const console_dir *console, bool missing_only,
                                "Could not read ROM files for this system.");
     }
 
-    int system_id = ss_platform_id(console->tag);
+    sg_mapping mapping = systems_resolve(console->path, console->tag);
+    if (!mapping.platform) {
+        free(roms);
+        return make_run_result(RUN_ERROR, (scrape_summary){0},
+                               "No scraping platform is selected for this folder.");
+    }
+    int system_id = mapping.platform->ss_id;
     if (system_id < 0) {
         free(roms);
         return make_run_result(RUN_ERROR, (scrape_summary){0},
-                               "This system does not have a ScreenScraper mapping.");
+                               "ScreenScraper has no artwork for this platform.");
     }
 
     rom_file *to_scrape = malloc(sizeof(rom_file) * (size_t)rom_count);

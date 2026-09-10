@@ -1,6 +1,6 @@
 # ScrapeGoat
 
-A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and manuals from [ScreenScraper.fr](https://www.screenscraper.fr/) and downloads cheats from [Libretro](https://github.com/libretro/libretro-database) for your ROM library on `tg5040`, `tg5050`, and `my355` devices.
+A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and manuals from [ScreenScraper.fr](https://www.screenscraper.fr/) and downloads cheats from [Libretro](https://github.com/libretro/libretro-database) for your ROM library on `tg5040`, `tg5050`, `my355`, and `h700` devices.
 
 ## Supported Platforms
 
@@ -10,6 +10,7 @@ A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and man
 | `tg5040` (TG3040) | TrimUI Brick | 1024×768 | Docker (ARM64) |
 | `tg5050` | TrimUI Smart Pro S | 1280×720 | Docker (ARM64) |
 | `my355` | Miyoo Flip | 640x480 | Docker (ARM64) |
+| `h700` | Anbernic H700 devices | Varies | Docker (ARM64) |
 
 > The Brick and Smart Pro share the same `tg5040` filesystem layout (tools, roms, settings paths are identical). The pak auto-detects the Brick via the `DEVICE` environment variable (`"brick"` vs `"smartpro"`), which NextUI's `launch.sh` exports at startup.
 
@@ -24,8 +25,9 @@ A [NextUI](https://github.com/LoveRetro/NextUI) Pak that scrapes artwork and man
 - Can hand an active queue to a background daemon on quit, then automatically resume it in the foreground when ScrapeGoat is reopened
 - Configurable artwork priority (20 media types available including covers, wheels, fan art, and more)
 - Configurable region priority (USA, Europe, Japan, France, Germany, Spain, Italy, Portugal, World, and more)
-- Supports 47 systems via ScreenScraper (33 bundled + 14 community paks, plus `P8` alias support for PICO-8 folders)
-- Supports 33 systems for cheat downloading via Libretro
+- Recognises all 64 ROM-folder suffixes a current NextUI install can produce, from the bundled skeleton and every Pak Store emulator
+- Ships the full ScreenScraper platform list, so any folder can be pointed at any of 250 platforms; 37 of them also have a Libretro cheat database
+- Lets you choose what a folder holds when its suffix does not say — a GPGX folder can be Mega Drive, Master System, Game Gear, SG-1000 or Mega CD
 - Shows detailed scraping summary (Total / Found / Not Found / Errors)
 - Fully supports multi-disc games, CUE/BIN disc images, and zip-archived ROMs
 - Handles MD5 hashing with automatic fallback to filename-only matching
@@ -69,13 +71,11 @@ Background mode is an exit-time handoff, not a second long-lived session. The da
 5. **Stop, background, or wait** — Press **Y** to stop early and keep completed items, or quit and choose **Exit to Background** to let the remaining queue continue after the app exits
 6. **Review summary** — See Total / Found / Not Found / Errors
 
-Supported systems for artwork (46 total):
-- **Nintendo:** Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance (and mGBA), SNES/SFC, Virtual Boy, Famicom Disk System, Nintendo 64, Nintendo DS
-- **Sega:** Master System, Genesis/MD, Game Gear, Mega-CD, 32X, Dreamcast, Saturn
-- **Sony:** PlayStation, PlayStation Portable
-- **Atari:** 2600, 5200, 7800, Lynx, Jaguar, Atari 800
-- **NEC:** PC Engine/TurboGrafx, PC Engine SuperGrafx
-- **Other:** Neo Geo Pocket, Neo Geo Pocket Color, Commodore 64, Commodore 128, Amstrad CPC, MSX, Amiga, ColecoVision, SG-1000, Arcade (FBNeo), Pokémon Mini, VIC-20, Intellivision, 3DO, PICO-8 (`PICO` and legacy `P8` tags), TIC-80, RPG Maker 2000/2003, ScummVM
+Fifty-seven ROM-folder suffixes map to a ScreenScraper platform out of the box, covering
+every emulator in the NextUI skeleton and every emulator in the Pak Store. Any other folder
+can be pointed at any of the 250 platforms ScreenScraper knows — see
+[System Mappings](#system-mappings). [SYSTEMS.md](SYSTEMS.md) lists every suffix, what it
+targets, and the evidence behind that.
 
 ### Download Cheats
 
@@ -85,8 +85,9 @@ Supported systems for artwork (46 total):
 
 The pak downloads cheats from the official [Libretro cheat database](https://github.com/libretro/libretro-database/tree/master/cht) and matches them to your ROM files by normalized name. It also understands some multi-title cheat filenames such as `Title A _ Title B`, so alternate regional titles can still resolve to the same cheat file. When multiple cheat files exist for the same game (e.g. different regions), ScrapeGoat picks the one that best matches your ROM's region and your configured region priority. See [How Matching Works](#how-matching-works) for details.
 
-Supported systems for cheats (33 total, based on current Libretro `cht/` directories):
-Famicom/NES, Game Boy, Game Boy Color, Game Boy Advance, Game Boy Advance (mGBA), SNES/SFC, Super Famicom (Supafaust), Super Game Boy, PlayStation, Master System, Genesis/MD, Mega-CD, Game Gear, Sega 32X, Sega Saturn, PC Engine, Nintendo FDS, Arcade (FBNeo), Atari 2600, Atari 5200, Atari 7800, Lynx, ColecoVision, MSX, Nintendo 64, Nintendo DS, PlayStation Portable, Dreamcast, Atari Jaguar, PC Engine SuperGrafx, Intellivision, Atari 800, TIC-80
+Thirty-seven suffixes reach a Libretro cheat database out of the box. A platform can have
+artwork and no cheats, cheats and no artwork, or both; the picker shows which, and a folder
+only appears under **Cheats** when the platform you chose has a cheat database.
 
 ### Download Manuals
 
@@ -188,6 +189,79 @@ Turn this **On** to include those entries in your scrape. Useful if you want to 
 | Option | Default |
 |--------|---------|
 | Show hidden/disabled | **Off** |
+
+## System Mappings
+
+NextUI picks an emulator from a ROM folder's suffix: `Roms/Game Boy Advance (GBA)/` runs
+whatever `GBA.pak` is installed. That suffix names an *emulator*, which is not always one
+scraping platform. Genesis Plus GX ships as a single `GPGX` pak whose documentation asks for
+five folders — Mega Drive, Master System, Game Gear, SG-1000 and Mega CD — all sharing the
+`GPGX` suffix. No single bundled default can be right for all five, so ScrapeGoat asks.
+
+### Choosing what a folder holds
+
+A folder with no platform is listed as **unmapped** rather than hidden, in every mode it
+could reach. Open it, or press **X** on any row, to pick a platform. **Settings → System
+Mappings** does the same from one screen, listing unmapped folders first.
+
+The picker offers likely matches first — an exact match on the folder's own name, then the
+reviewed candidates for its suffix — followed by every platform A–Z. Press **Y** to search by
+name, alias or id. Each row shows whether that platform has artwork, cheats, or both.
+
+### Scopes and precedence
+
+Two scopes are available, and they resolve highest-first:
+
+1. **This folder** — applies to that folder alone
+2. **Suffix default** — your own default for every folder with that suffix
+3. **Bundled default** — what ScrapeGoat ships for that suffix
+
+A folder's own choice always wins over a suffix default, which wins over the bundled one.
+Clearing a choice exposes the next one down: clear a folder override and its suffix default
+applies again; clear that and the bundled default returns. An ambiguous suffix like `GPGX`
+has no bundled default, so clearing everything leaves the folder unmapped again.
+
+Your choices live in `/mnt/SDCARD/.userdata/shared/ScrapeGoat/system_overrides.json`,
+separate from the shipped catalog, so a pak update never overwrites them.
+
+For Mac UI testing, run `make setup-mock-sdcard` to add five folders sharing
+`GPGX` under `mock_sdcard/Roms/`: Mega Drive, Master System, Game Gear, SG-1000,
+and Mega CD. Each contains a distinct, non-playable placeholder ROM so it appears
+in the library even with empty folders excluded. The setup preserves existing
+files and saved mappings; choose each folder's platform in the mapping picker.
+
+### Hiding a folder
+
+**Hide this folder** removes a folder from the library without forgetting its platform, and
+without touching any other folder that shares its suffix. Hidden folders stay listed in
+Settings → System Mappings, where you can show them again.
+
+Hiding is a preference, not a capability. A folder that disappears from **Cheats** because
+the platform you chose has no cheat database is a different thing, and the picker says which
+platforms do.
+
+### Renaming a folder
+
+A mapping is keyed by the folder's name relative to `Roms/`, exactly as spelled — including
+a `.disabled` suffix. Renaming a folder, or toggling `.disabled`, therefore makes it a new
+folder as far as mappings go: it falls back to the suffix default until you map it again.
+The old entry is kept and listed as **folder missing** in Settings so you can clear it.
+Moving the SD card, or mounting it somewhere else, changes nothing.
+
+### While work is queued
+
+Mapping changes apply to newly queued work. A job that is already queued keeps the platform
+it was queued with, all the way through a background handoff, so mappings cannot be edited
+while anything is pending. Let the queue finish or cancel it first.
+
+### Limits
+
+Cheats and manuals are written to per-suffix directories, which NextUI expects. Two folders
+that share a suffix therefore share those output directories, and two identically named
+games in `Mega Drive (GPGX)` and `Master System (GPGX)` would collide. Give them distinct
+names, or use suffixes that differ.
+
+Selection is per folder. A folder holds one platform; mixed content needs separate folders.
 
 ## How Matching Works
 
@@ -367,7 +441,7 @@ brew install go sdl2 sdl2_ttf sdl2_image sdl2_gfx
 
 ### First-Time Setup
 
-> **Note:** Only developers/maintainers building the ScrapeGoat binary need to do this. If you're installing a pre-built `.pak` or `.pakz`, skip to [Installing on a Handheld](#installing-on-a-handheld).
+> **Note:** Only developers/maintainers building the ScrapeGoat binary need to do this. If you're installing a pre-built `.pak.zip`, skip to [Installing on a Handheld](#installing-on-a-handheld).
 
 If you're building from source, you need ScreenScraper.fr **developer credentials** to embed in the binary:
 
@@ -395,20 +469,21 @@ Embedded builds vendor their own curl/OpenSSL runtime bits and package `lib/cace
 # Build the mac development binary
 make mac
 
-# Build for specific device platforms
+# Build one binary for every supported NextUI device
+make universal
+make
+
+# Optional legacy regression builds
 make tg5040
 make tg5050
 make my355
 
-# Build all device platforms
-make
-
-# Package per-platform bundles
+# Optional legacy per-platform bundles
 make package-tg5040
 make package-tg5050
 make package-my355
 
-# Package all supported platforms into release zips + combined .pakz
+# Build one platform-neutral Pak Store archive
 make package
 
 # See all targets
@@ -438,13 +513,14 @@ when redistributing GPL-covered object code: [installer](https://www.gnu.org/lic
 | Target | Output |
 |--------|--------|
 | mac | `build/mac/scrapegoat` |
+| universal | `build/universal/scrapegoat` |
 | tg5040 | `build/tg5040/scrapegoat` |
 | tg5050 | `build/tg5050/scrapegoat` |
 | my355 | `build/my355/scrapegoat` |
 | package-tg5040 | `build/release/tg5040/ScrapeGoat.pak.zip` |
 | package-tg5050 | `build/release/tg5050/ScrapeGoat.pak.zip` |
 | package-my355 | `build/release/my355/ScrapeGoat.pak.zip` |
-| package | `build/release/all/ScrapeGoat.pakz` |
+| package | `build/release/all/ScrapeGoat.pak.zip` |
 
 The `.pak.zip` includes:
 - Binary (`scrapegoat`)
@@ -454,17 +530,32 @@ The `.pak.zip` includes:
 - Bundled static git binary
 - Bundled TLS trust store at `lib/cacert.pem` used by both libcurl and git
 
+### Automated builds and releases
+
+GitHub Actions runs the regression checks and builds the unified
+`ScrapeGoat.pak.zip` on pull requests. PR artifacts use placeholder developer
+credentials and are for build verification, not ScreenScraper downloads.
+
+Every push to `main` runs the same build with the repository's ScreenScraper
+developer secrets. If the version in `pak.json` has no GitHub Release yet, the
+Release workflow publishes that version with its changelog and the single
+`ScrapeGoat.pak.zip` asset. Existing releases are left unchanged. The workflows
+also support manual runs; publishing is restricted to `main`.
+
+For a new release, update `pak.json`'s version and changelog plus `SS_SOFT_NAME`
+and `SS_USER_AGENT` in `src/screenscraper.h`, then merge to `main`. Keep
+`release_filename` set to `ScrapeGoat.pak.zip`. See [CI credentials](SETUP.md#github-actions)
+for repository setup.
+
 ## Installing on a Handheld
 
-1. **Build and package:** `make package` for all platforms, or `make package-<platform>` for one target.
+1. **Build and package:** `make package` for the universal Pak Store archive, or `make package-<platform>` for a legacy target.
 
 2. **For a per-platform zip:**
-   - Extract `ScrapeGoat.pak.zip` to your SD card as `Tools/<platform>/ScrapeGoat.pak/`
-   - Replace `<platform>` with `tg5040`, `tg5050`, or `my355`
+   - Extract the contents of `ScrapeGoat.pak.zip` to your SD card as `Tools/<platform>/ScrapeGoat.pak/`
+   - Replace `<platform>` with `tg5040`, `tg5050`, `my355`, or `h700`
 
-3. **For the combined `.pakz`:**
-   - Place `build/release/all/ScrapeGoat.pakz` at the root of your SD card
-   - NextUI will auto-install it into the matching `Tools/<platform>/ScrapeGoat.pak/` directory
+3. **For Pak Store:** publish `build/release/all/ScrapeGoat.pak.zip`; Pak Store installs it into the current platform's Tools directory.
 
 4. **Launch** from the NextUI Tools menu
 

@@ -372,7 +372,9 @@ static void *manual_worker_fn(void *arg) {
 /* ── Cheat processing (single-threaded) ──────────────────── */
 
 typedef struct {
-    char tag[32];
+    /* Keyed by the libretro cheat directory, not the folder suffix: two GPGX
+     * folders in one queue target different databases. */
+    char dir[256];
     cheat_list list;
     bool valid;
 } cheat_cache_entry;
@@ -403,9 +405,9 @@ static bool cheat_repo_is_ready(void) {
     return ready;
 }
 
-static cheat_list *get_cached_cheat_list_locked(const char *system_tag) {
+static cheat_list *get_cached_cheat_list_locked(const char *cheat_dir) {
     for (int i = 0; i < g_cheat_cache_count; i++) {
-        if (strcmp(g_cheat_cache[i].tag, system_tag) == 0 &&
+        if (strcmp(g_cheat_cache[i].dir, cheat_dir) == 0 &&
             g_cheat_cache[i].valid) {
             return &g_cheat_cache[i].list;
         }
@@ -413,21 +415,18 @@ static cheat_list *get_cached_cheat_list_locked(const char *system_tag) {
     return NULL;
 }
 
-static cheat_list *ensure_cheat_list(const char *system_tag,
+static cheat_list *ensure_cheat_list(const char *cheat_dir,
                                      atomic_int *interrupt_signal) {
+    if (!cheat_dir || !cheat_dir[0])
+        return NULL;
+
     pthread_mutex_lock(&g_cheat_state_mutex);
 
-    cheat_list *cached = get_cached_cheat_list_locked(system_tag);
+    cheat_list *cached = get_cached_cheat_list_locked(cheat_dir);
     if (cached)
     {
         pthread_mutex_unlock(&g_cheat_state_mutex);
         return cached;
-    }
-
-    const char *libretro_dir_name = libretro_dir(system_tag);
-    if (!libretro_dir_name) {
-        pthread_mutex_unlock(&g_cheat_state_mutex);
-        return NULL;
     }
 
     if (!g_cheat_repo_ready) {
@@ -447,7 +446,7 @@ static cheat_list *ensure_cheat_list(const char *system_tag,
         g_cheat_repo_ready = true;
     }
 
-    if (ensure_system_checked_out(libretro_dir_name, interrupt_signal,
+    if (ensure_system_checked_out(cheat_dir, interrupt_signal,
                                   NULL, NULL, 0.0f, 0.0f) != CHEAT_OP_OK) {
         pthread_mutex_unlock(&g_cheat_state_mutex);
         return NULL;
@@ -460,8 +459,8 @@ static cheat_list *ensure_cheat_list(const char *system_tag,
 
     cheat_cache_entry *entry = &g_cheat_cache[g_cheat_cache_count];
     memset(entry, 0, sizeof(*entry));
-    snprintf(entry->tag, sizeof(entry->tag), "%s", system_tag);
-    if (build_cheat_list(libretro_dir_name, &entry->list) != 0) {
+    snprintf(entry->dir, sizeof(entry->dir), "%s", cheat_dir);
+    if (build_cheat_list(cheat_dir, &entry->list) != 0) {
         memset(entry, 0, sizeof(*entry));
         pthread_mutex_unlock(&g_cheat_state_mutex);
         return NULL;
@@ -483,9 +482,9 @@ static void process_cheat_item(int queue_index, app_settings *settings) {
     if (!claim_item(queue_index, QUEUE_TYPE_CHEAT, initial_status, &item))
         return;
 
-    if (!libretro_dir(item.system_tag)) {
+    if (!item.cheat_dir[0]) {
         set_item_error(queue_index, QUEUE_ERROR,
-                       "No libretro mapping for system '%s'", item.system_tag);
+                       "No cheat database selected for '%s'", item.system_tag);
         return;
     }
 
@@ -494,7 +493,7 @@ static void process_cheat_item(int queue_index, app_settings *settings) {
         return;
     }
 
-    cheat_list *list = ensure_cheat_list(item.system_tag, &g_interrupt);
+    cheat_list *list = ensure_cheat_list(item.cheat_dir, &g_interrupt);
     if (!list || atomic_load(&g_interrupt)) {
         if (!atomic_load(&g_interrupt))
             set_item_error(queue_index, QUEUE_ERROR,
@@ -1046,9 +1045,10 @@ int queue_add_all_cheats(const console_dir *console, bool show_hidden) {
 static bool queue_add_artwork_internal(const rom_file *rom,
                                         const console_dir *console,
                                         bool force) {
-    int system_id = ss_platform_id(console->tag);
-    if (system_id < 0)
+    sg_mapping mapping = systems_resolve(console->path, console->tag);
+    if (mapping.hidden || !mapping.platform || mapping.platform->ss_id < 0)
         return false;
+    int system_id = mapping.platform->ss_id;
     if (!force && artwork_exists(rom->path, rom->display))
         return false;
 
@@ -1091,8 +1091,14 @@ static bool queue_add_artwork_internal(const rom_file *rom,
 static bool queue_add_cheat_internal(const rom_file *rom,
                                       const console_dir *console,
                                       bool force) {
-    if (!libretro_dir(console->tag))
+    sg_mapping mapping = systems_resolve(console->path, console->tag);
+    if (mapping.hidden || !mapping.platform || !mapping.platform->libretro_dir)
         return false;
+    /* Capture the provider target now: the item keeps it through handoff, and
+     * a later mapping edit only affects newly queued work. */
+    const char *cheat_dir = mapping.platform->libretro_dir;
+    if (strlen(cheat_dir) >= sizeof(((queue_item *)0)->cheat_dir))
+        return false;   /* never silently truncate a provider path */
     if (!force && cheat_exists(console->tag, rom->display))
         return false;
 
@@ -1122,7 +1128,8 @@ static bool queue_add_cheat_internal(const rom_file *rom,
     snprintf(item->system_tag, sizeof(item->system_tag), "%s", console->tag);
     snprintf(item->system_display, sizeof(item->system_display), "%s", console->display);
     snprintf(item->console_path, sizeof(item->console_path), "%s", console->path);
-    item->system_id = ss_platform_id(console->tag);
+    snprintf(item->cheat_dir, sizeof(item->cheat_dir), "%s", cheat_dir);
+    item->system_id = mapping.platform->ss_id;
     item->status    = QUEUE_IDLE;
     item->force     = force;
     set_dirty_locked();
@@ -1190,9 +1197,10 @@ static void get_manual_download_dir(char *buf, size_t buflen) {
 static bool queue_add_manual_internal(const rom_file *rom,
                                        const console_dir *console,
                                        bool force) {
-    int system_id = ss_platform_id(console->tag);
-    if (system_id < 0)
+    sg_mapping mapping = systems_resolve(console->path, console->tag);
+    if (mapping.hidden || !mapping.platform || mapping.platform->ss_id < 0)
         return false;
+    int system_id = mapping.platform->ss_id;
 
     char manual_dir[PATH_MAX];
     get_manual_download_dir(manual_dir, sizeof(manual_dir));
@@ -1412,6 +1420,33 @@ void queue_cancel_all(void) {
     pthread_mutex_unlock(&g_mutex);
 }
 
+bool queue_has_unfinished_work(void) {
+    bool unfinished;
+
+    pthread_mutex_lock(&g_mutex);
+    /* queue_is_active() alone is not enough: an idle item is still work that
+     * carries the provider target it was queued with. */
+    unfinished = queue_has_non_terminal_locked() || queue_has_idle_items_locked();
+    pthread_mutex_unlock(&g_mutex);
+    return unfinished;
+}
+
+bool queue_begin_mapping_edit(void) {
+    if (queue_has_unfinished_work())
+        return false;
+
+    /* A manager may still be winding down after the last item finished. */
+    stop_manager_for_transition();
+
+    if (queue_has_unfinished_work())
+        return false;
+
+    pthread_mutex_lock(&g_cheat_state_mutex);
+    clear_cheat_repo_state_locked();
+    pthread_mutex_unlock(&g_cheat_state_mutex);
+    return true;
+}
+
 bool queue_invalidate_cheat_repo_state(void) {
     bool can_invalidate;
 
@@ -1457,6 +1492,36 @@ int queue_handoff_snapshot(queue_item *out, int max_items) {
     return count;
 }
 
+/* A cheat item queued before provider targets were captured carries no
+ * directory. Resolve it once, here, before any worker starts. An item whose
+ * folder no longer has an eligible target gets an explicit error rather than a
+ * guessed database. A non-empty but unusable value is corrupt state, not
+ * legacy data. */
+static void restore_cheat_target_locked(queue_item *item) {
+    if (item->type != QUEUE_TYPE_CHEAT || is_terminal_status(item->status))
+        return;
+
+    if (item->cheat_dir[0]) {
+        if (!systems_valid_provider_dir(item->cheat_dir)) {
+            item->status = QUEUE_ERROR;
+            snprintf(item->error_msg, sizeof(item->error_msg),
+                     "Saved cheat database name is invalid");
+        }
+        return;
+    }
+
+    sg_mapping mapping = systems_resolve(item->console_path, item->system_tag);
+    if (mapping.hidden || !mapping.platform || !mapping.platform->libretro_dir
+        || strlen(mapping.platform->libretro_dir) >= sizeof(item->cheat_dir)) {
+        item->status = QUEUE_ERROR;
+        snprintf(item->error_msg, sizeof(item->error_msg),
+                 "No cheat database selected for '%s'", item->system_tag);
+        return;
+    }
+    snprintf(item->cheat_dir, sizeof(item->cheat_dir), "%s",
+             mapping.platform->libretro_dir);
+}
+
 int queue_load_items(const queue_item *items, int count) {
     if (count > QUEUE_MAX_ITEMS)
         count = QUEUE_MAX_ITEMS;
@@ -1471,6 +1536,7 @@ int queue_load_items(const queue_item *items, int count) {
             g_items[i].error_msg[0] = '\0';
             has_pending = true;
         }
+        restore_cheat_target_locked(&g_items[i]);
         if (g_items[i].id >= g_next_item_id)
             g_next_item_id = g_items[i].id + 1;
     }
