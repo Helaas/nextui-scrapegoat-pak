@@ -530,6 +530,23 @@ The `.pak.zip` includes:
 - Bundled static git binary
 - Bundled TLS trust store at `lib/cacert.pem` used by both libcurl and git
 
+### Automated builds and releases
+
+GitHub Actions runs the regression checks and builds the unified
+`ScrapeGoat.pak.zip` on pull requests. PR artifacts use placeholder developer
+credentials and are for build verification, not ScreenScraper downloads.
+
+Every push to `main` runs the same build with the repository's ScreenScraper
+developer secrets. If the version in `pak.json` has no GitHub Release yet, the
+Release workflow publishes that version with its changelog and the single
+`ScrapeGoat.pak.zip` asset. Existing releases are left unchanged. The workflows
+also support manual runs; publishing is restricted to `main`.
+
+For a new release, update `pak.json`'s version and changelog plus `SS_SOFT_NAME`
+and `SS_USER_AGENT` in `src/screenscraper.h`, then merge to `main`. Keep
+`release_filename` set to `ScrapeGoat.pak.zip`. See [CI credentials](SETUP.md#github-actions)
+for repository setup.
+
 ## Installing on a Handheld
 
 1. **Build and package:** `make package` for the universal Pak Store archive, or `make package-<platform>` for a legacy target.

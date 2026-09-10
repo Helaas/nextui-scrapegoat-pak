@@ -1,0 +1,76 @@
+name: Release
+
+# Publish the pak.json version after a successful main build, once per version.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/build.yml
+    secrets:
+      SCREENSCRAPER_DEV_ID: ${{ secrets.SCREENSCRAPER_DEV_ID }}
+      SCREENSCRAPER_DEV_PASSWORD: ${{ secrets.SCREENSCRAPER_DEV_PASSWORD }}
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check whether this version is already released
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          # API/auth failures must fail the job, not be treated as a new version.
+          versions="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name')"
+          if printf '%s\n' "$versions" | grep -Fxq "$VERSION"; then
+            echo "Release $VERSION already exists - nothing to publish."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download ScrapeGoat.pak.zip
+        if: steps.gate.outputs.release == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ScrapeGoat-pak-zip
+
+      - name: Build release notes from pak.json
+        if: steps.gate.outputs.release == 'true'
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(jq -er .version pak.json)" = "$VERSION"
+          unzip -p ScrapeGoat.pak.zip pak.json | cmp - pak.json
+          jq -er --arg v "$VERSION" '.changelog[$v] | select(type == "string" and length > 0)' pak.json > notes.md
+
+      - name: Publish GitHub Release
+        if: steps.gate.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$VERSION" ScrapeGoat.pak.zip \
+            --target "$GITHUB_SHA" \
+            --title "ScrapeGoat $VERSION" \
+            --notes-file notes.md
+          gh release view "$VERSION" --json assets --jq '.assets[].name'
