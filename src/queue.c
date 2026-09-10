@@ -1502,7 +1502,7 @@ static void restore_cheat_target_locked(queue_item *item) {
         return;
 
     if (item->cheat_dir[0]) {
-        if (strchr(item->cheat_dir, '/')) {
+        if (!systems_valid_provider_dir(item->cheat_dir)) {
             item->status = QUEUE_ERROR;
             snprintf(item->error_msg, sizeof(item->error_msg),
                      "Saved cheat database name is invalid");

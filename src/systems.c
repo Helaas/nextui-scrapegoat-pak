@@ -20,6 +20,7 @@
 #define MAX_ID_LEN 128
 #define MAX_KEY_LEN 512
 #define MAX_DIR_LEN 200
+#define MAX_NAME_LEN 512
 
 /* ── Catalog storage ──────────────────────────────────────────── */
 
@@ -154,10 +155,23 @@ static char *read_file(const char *path, long *size_out) {
     char *buf = malloc((size_t)size + 1);
     if (!buf) { fclose(f); return NULL; }
     size_t read = fread(buf, 1, (size_t)size, f);
-    fclose(f);
+    bool ok = read == (size_t)size && !ferror(f);
+    if (fclose(f) != 0) ok = false;
+    if (!ok) { free(buf); return NULL; }
     buf[read] = '\0';
     if (size_out) *size_out = (long)read;
     return buf;
+}
+
+/* Require the entire file, including any trailing bytes, to be valid JSON. */
+static cJSON *parse_json(const char *text, long size) {
+    const char *end = NULL;
+    cJSON *root = cJSON_ParseWithLengthOpts(text, (size_t)size + 1, &end, true);
+    if (root && end != text + size) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+    return root;
 }
 
 /* ── Catalog loading ──────────────────────────────────────────── */
@@ -199,7 +213,7 @@ static int platform_index_by_id(const char *id) {
 }
 
 /* A cheat directory is one path component, never a traversal. */
-static bool valid_provider_dir(const char *dir) {
+bool systems_valid_provider_dir(const char *dir) {
     if (!dir || !dir[0] || strlen(dir) > MAX_DIR_LEN)
         return false;
     if (strchr(dir, '/') || strchr(dir, '\\'))
@@ -226,8 +240,9 @@ static bool load_platforms(const cJSON *root, const char *path) {
 
     const cJSON *item = NULL;
     cJSON_ArrayForEach(item, array) {
-        if (!cJSON_IsObject(item)) {
-            set_error("%s: platform %d is not an object", path, platform_count);
+        if (!cJSON_IsObject(item) || has_duplicate_keys(item)) {
+            set_error("%s: platform %d is not an object or repeats a field",
+                      path, platform_count);
             return false;
         }
         const cJSON *id = cJSON_GetObjectItemCaseSensitive(item, "id");
@@ -237,7 +252,8 @@ static bool load_platforms(const cJSON *root, const char *path) {
             set_error("%s: platform %d has no usable \"id\"", path, platform_count);
             return false;
         }
-        if (!cJSON_IsString(name) || !name->valuestring[0]) {
+        if (!cJSON_IsString(name) || !name->valuestring[0]
+            || strlen(name->valuestring) > MAX_NAME_LEN) {
             set_error("%s: platform \"%s\" has no \"name\"", path, id->valuestring);
             return false;
         }
@@ -259,6 +275,7 @@ static bool load_platforms(const cJSON *root, const char *path) {
         const cJSON *ss = cJSON_GetObjectItemCaseSensitive(item, "ss_id");
         if (ss && !cJSON_IsNull(ss)) {
             if (!cJSON_IsNumber(ss) || ss->valuedouble < 1
+                || ss->valuedouble > INT_MAX
                 || ss->valuedouble != (double)(int)ss->valuedouble) {
                 set_error("%s: platform \"%s\" has a non-positive ScreenScraper id",
                           path, rec->pub.id);
@@ -269,7 +286,7 @@ static bool load_platforms(const cJSON *root, const char *path) {
 
         const cJSON *dir = cJSON_GetObjectItemCaseSensitive(item, "libretro_dir");
         if (dir && !cJSON_IsNull(dir)) {
-            if (!cJSON_IsString(dir) || !valid_provider_dir(dir->valuestring)) {
+            if (!cJSON_IsString(dir) || !systems_valid_provider_dir(dir->valuestring)) {
                 set_error("%s: platform \"%s\" has an unusable cheat directory",
                           path, rec->pub.id);
                 return false;
@@ -297,8 +314,12 @@ static bool load_platforms(const cJSON *root, const char *path) {
                 }
                 const cJSON *alias = NULL;
                 cJSON_ArrayForEach(alias, aliases) {
-                    if (!cJSON_IsString(alias) || !alias->valuestring[0])
-                        continue;
+                    if (!cJSON_IsString(alias) || !alias->valuestring[0]
+                        || strlen(alias->valuestring) > MAX_NAME_LEN) {
+                        set_error("%s: platform \"%s\" has an invalid alias",
+                                  path, rec->pub.id);
+                        return false;
+                    }
                     rec->aliases[rec->alias_count] = dup_str(alias->valuestring);
                     if (!rec->aliases[rec->alias_count]) {
                         set_error("%s: out of memory", path);
@@ -424,7 +445,7 @@ static bool load_tag_candidates(const cJSON *root, const char *path) {
  * failure is never a reason to fall back to another file. */
 static bool resolve_catalog_path(char *buf, size_t buflen) {
     const char *explicit_path = getenv("SCRAPEGOAT_SYSTEMS_JSON");
-    if (explicit_path && explicit_path[0]) {
+    if (explicit_path) {
         if (strlen(explicit_path) >= buflen) {
             set_error("SCRAPEGOAT_SYSTEMS_JSON is too long");
             return false;
@@ -442,10 +463,18 @@ static bool resolve_catalog_path(char *buf, size_t buflen) {
     char beside[PATH_MAX];
     beside[0] = '\0';
     if (get_executable_dir(exe_dir, sizeof(exe_dir)) == 0) {
-        snprintf(beside, sizeof(beside), "%s/resources/systems.json", exe_dir);
+        int len = snprintf(beside, sizeof(beside), "%s/resources/systems.json", exe_dir);
+        if (len < 0 || (size_t)len >= sizeof(beside)) {
+            set_error("The executable-adjacent catalog path is too long");
+            return false;
+        }
         if (access(beside, R_OK) == 0) {
             snprintf(buf, buflen, "%s", beside);
             return true;
+        }
+        if (errno != ENOENT) {
+            set_error("%s cannot be read: %s", beside, strerror(errno));
+            return false;
         }
     }
 
@@ -470,12 +499,13 @@ static bool load_catalog(void) {
     if (!resolve_catalog_path(path, sizeof(path)))
         return false;
 
-    char *text = read_file(path, NULL);
+    long size;
+    char *text = read_file(path, &size);
     if (!text) {
         set_error("%s could not be read: %s", path, strerror(errno));
         return false;
     }
-    cJSON *root = cJSON_Parse(text);
+    cJSON *root = parse_json(text, size);
     free(text);
     if (!root) {
         set_error("%s is not valid JSON", path);
@@ -484,7 +514,8 @@ static bool load_catalog(void) {
 
     bool ok = false;
     const cJSON *schema = cJSON_GetObjectItemCaseSensitive(root, "schema");
-    if (!cJSON_IsNumber(schema) || (int)schema->valuedouble != CATALOG_SCHEMA) {
+    if (!cJSON_IsObject(root) || !cJSON_IsNumber(schema)
+        || schema->valuedouble != CATALOG_SCHEMA) {
         set_error("%s has schema %s, expected %d", path,
                   cJSON_IsNumber(schema) ? "an unsupported version" : "none",
                   CATALOG_SCHEMA);
@@ -503,16 +534,41 @@ static bool load_catalog(void) {
 
 /* ── Folder keys ──────────────────────────────────────────────── */
 
-static void normalize_path(const char *in, char *out, size_t outlen) {
-    size_t n = 0;
-    for (size_t i = 0; in[i] && n + 1 < outlen; i++) {
-        if (in[i] == '/' && n > 0 && out[n - 1] == '/')
+/* Resolve relative spelling without following symlinks. Dot components are
+ * allowed in the SD-root prefix, but never in the folder key underneath it. */
+static bool absolute_path(const char *in, char *out, size_t outlen,
+                          const char *rom_root) {
+    char input[PATH_MAX], cwd[PATH_MAX];
+    if (in[0] != '/' && !getcwd(cwd, sizeof(cwd)))
+        return false;
+    int len = in[0] == '/'
+        ? snprintf(input, sizeof(input), "%s", in)
+        : snprintf(input, sizeof(input), "%s/%s", cwd, in);
+    if (len < 0 || (size_t)len >= sizeof(input) || outlen < 2)
+        return false;
+
+    snprintf(out, outlen, "/");
+    char *save = NULL;
+    for (char *part = strtok_r(input, "/", &save); part;
+         part = strtok_r(NULL, "/", &save)) {
+        size_t used = strlen(out);
+        if (strcmp(part, ".") == 0 || strcmp(part, "..") == 0) {
+            size_t root_len = rom_root ? strlen(rom_root) : 0;
+            if (root_len && strncmp(out, rom_root, root_len) == 0
+                && (out[root_len] == '/' || out[root_len] == '\0'))
+                return false;
+            if (part[1] == '.' && used > 1) {
+                char *slash = strrchr(out, '/');
+                slash[slash == out ? 1 : 0] = '\0';
+            }
             continue;
-        out[n++] = in[i];
+        }
+        len = snprintf(out + used, outlen - used, "%s%s",
+                       used == 1 ? "" : "/", part);
+        if (len < 0 || (size_t)len >= outlen - used)
+            return false;
     }
-    while (n > 1 && out[n - 1] == '/')
-        n--;
-    out[n] = '\0';
+    return true;
 }
 
 static bool key_is_safe(const char *key) {
@@ -559,19 +615,9 @@ bool systems_folder_key(const char *console_path, char *buf, size_t buflen) {
 
     char root[PATH_MAX];
     char path[PATH_MAX];
-    normalize_path(roms, root, sizeof(root));
-    normalize_path(console_path, path, sizeof(path));
-    if (strip_root(root, path, buf, buflen))
-        return true;
-
-    /* The ROM root and the folder can be written differently — a relative
-     * mock root on macOS against an absolute scan result, say. Compare the
-     * resolved paths before giving up. Symlinks are not followed further:
-     * two differently named folders must stay two different keys. */
-    char real_root[PATH_MAX];
-    char real_path[PATH_MAX];
-    if (realpath(root, real_root) && realpath(path, real_path)
-        && strip_root(real_root, real_path, buf, buflen))
+    if (absolute_path(roms, root, sizeof(root), NULL)
+        && absolute_path(console_path, path, sizeof(path), root)
+        && strip_root(root, path, buf, buflen))
         return true;
 
     buf[0] = '\0';
@@ -704,14 +750,15 @@ static void load_overrides(void) {
     if (access(overrides_path, F_OK) != 0)
         return;   /* absent is normal */
 
-    char *text = read_file(overrides_path, NULL);
+    long size;
+    char *text = read_file(overrides_path, &size);
     if (!text) {
         set_warning("Your saved system mappings could not be read (%s). "
                     "Bundled defaults are in use.", strerror(errno));
         overrides_need_backup = true;
         return;
     }
-    cJSON *root = cJSON_Parse(text);
+    cJSON *root = parse_json(text, size);
     free(text);
     if (!root || !cJSON_IsObject(root)) {
         cJSON_Delete(root);
@@ -722,8 +769,16 @@ static void load_overrides(void) {
         return;
     }
 
+    if (has_duplicate_keys(root)) {
+        cJSON_Delete(root);
+        set_warning("Your saved system mappings repeat a top-level field. "
+                    "Bundled defaults are in use; the original file will be preserved.");
+        overrides_need_backup = true;
+        return;
+    }
+
     const cJSON *schema = cJSON_GetObjectItemCaseSensitive(root, "schema");
-    if (!cJSON_IsNumber(schema) || (int)schema->valuedouble != CATALOG_SCHEMA) {
+    if (!cJSON_IsNumber(schema) || schema->valuedouble != CATALOG_SCHEMA) {
         cJSON_Delete(root);
         set_warning("Your saved system mappings use an unsupported format. "
                     "Bundled defaults are in use.");
@@ -776,8 +831,8 @@ static void load_overrides(void) {
             const cJSON *item = NULL;
             cJSON_ArrayForEach(item, folders) {
                 if (!item->string || !key_is_safe(item->string)
-                    || strlen(item->string) > MAX_KEY_LEN
-                    || !cJSON_IsObject(item)) {
+                    || strlen(item->string) >= MAX_KEY_LEN
+                    || !cJSON_IsObject(item) || has_duplicate_keys(item)) {
                     set_warning("Saved mapping for folder \"%s\" is unusable; it "
                                 "was skipped.", item->string ? item->string : "?");
                     overrides_need_backup = true;
@@ -785,6 +840,11 @@ static void load_overrides(void) {
                 }
                 const cJSON *platform = cJSON_GetObjectItemCaseSensitive(item, "platform");
                 const cJSON *hidden = cJSON_GetObjectItemCaseSensitive(item, "hidden");
+                if (hidden && !cJSON_IsBool(hidden)) {
+                    set_warning("Saved visibility for folder \"%s\" is not a "
+                                "boolean; it was skipped.", item->string);
+                    overrides_need_backup = true;
+                }
                 const char *platform_id = NULL;
                 if (platform && !cJSON_IsNull(platform)) {
                     if (!cJSON_IsString(platform)

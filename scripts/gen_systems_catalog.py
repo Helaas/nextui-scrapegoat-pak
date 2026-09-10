@@ -23,11 +23,13 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
 import re
 import sys
+import tempfile
 import time
 import unicodedata
 import urllib.error
@@ -152,6 +154,7 @@ LIBRETRO_BINDINGS: dict[str, str] = {
 # Providers reviewed and found to carry nothing for a platform. Recorded so the
 # audit can separate "checked, unavailable" from "not verified yet".
 VERIFIED_UNAVAILABLE: dict[str, list[str]] = {
+    "commodore64": ["libretro_dir"],
     "commodorepet": ["libretro_dir"],
     "commodoreplus4": ["libretro_dir"],
     "vic20": ["libretro_dir"],
@@ -355,8 +358,95 @@ def platform_names(system: dict) -> tuple[str, list[str]]:
     return primary, aliases
 
 
+def read_catalog(path: Path) -> dict:
+    """Read the reviewed registry strictly; never repair it by dropping data."""
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise GeneratorError(f"duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise GeneratorError(f"invalid JSON number {value}")
+
+    def text(value, limit):
+        return isinstance(value, str) and 0 < len(value.encode("utf-8")) <= limit and "\0" not in value
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"),
+                          object_pairs_hook=object_pairs,
+                          parse_constant=invalid_constant)
+        if (not isinstance(data, dict) or isinstance(data.get("schema"), bool)
+                or data.get("schema") != 1):
+            raise GeneratorError("unsupported or missing schema")
+        platforms = data.get("platforms")
+        if not isinstance(platforms, list) or not platforms:
+            raise GeneratorError("platforms must be a nonempty array")
+        ids = set()
+        for platform in platforms:
+            if not isinstance(platform, dict):
+                raise GeneratorError("platform entry is not an object")
+            pid = platform.get("id")
+            if not text(pid, 128) or pid in ids or not text(platform.get("name"), 512):
+                raise GeneratorError("invalid/duplicate platform id or name")
+            ids.add(pid)
+            ss_id = platform.get("ss_id")
+            if ss_id is not None and (type(ss_id) not in (int, float)
+                    or not 1 <= ss_id <= 2147483647 or int(ss_id) != ss_id):
+                raise GeneratorError(f"{pid}: invalid ScreenScraper id")
+            directory = platform.get("libretro_dir")
+            if directory is not None and (not text(directory, 200)
+                    or directory in (".", "..") or "/" in directory or "\\" in directory):
+                raise GeneratorError(f"{pid}: invalid cheat directory")
+            aliases = platform.get("aliases")
+            if aliases is not None and (not isinstance(aliases, list)
+                    or any(not text(alias, 512) for alias in aliases)):
+                raise GeneratorError(f"{pid}: invalid aliases")
+            unavailable = platform.get("verified_unavailable", [])
+            if not isinstance(unavailable, list) or any(
+                    key not in ("ss_id", "libretro_dir") or platform.get(key) is not None
+                    for key in unavailable):
+                raise GeneratorError(f"{pid}: invalid provider availability decision")
+        for field in ("tags", "tag_candidates"):
+            mapping = data.get(field)
+            if mapping is None:
+                mapping = {}
+            if not isinstance(mapping, dict):
+                raise GeneratorError(f"{field} must be an object")
+            for tag, targets in mapping.items():
+                if not text(tag, 64):
+                    raise GeneratorError(f"{field}: invalid suffix")
+                if field == "tags":
+                    targets = [targets]
+                if not isinstance(targets, list) or not targets:
+                    raise GeneratorError(f"{tag}: candidates must be a nonempty array")
+                if any(not isinstance(pid, str) or pid not in ids for pid in targets):
+                    raise GeneratorError(f"{tag}: unknown platform reference")
+        return data
+    except (OSError, ValueError, GeneratorError) as exc:
+        raise GeneratorError(f"{path}: {exc}") from None
+
+
 def build_catalog(systems: list[dict], cht_dirs: list[str],
-                  ss_digest: str, cht_commit: str) -> dict:
+                  ss_digest: str, cht_commit: str, existing: dict | None = None) -> dict:
+    # Constants bootstrap the first catalog only. Once published, the catalog
+    # itself owns every identity and reviewed decision, including cheat-only IDs.
+    if existing is None:
+        seed = []
+        for ss_id, (pid, name) in IDENTITY.items():
+            entry = {"id": pid, "name": name, "ss_id": ss_id}
+            if pid in LIBRETRO_BINDINGS:
+                entry["libretro_dir"] = LIBRETRO_BINDINGS[pid]
+            if pid in VERIFIED_UNAVAILABLE:
+                entry["verified_unavailable"] = VERIFIED_UNAVAILABLE[pid]
+            seed.append(entry)
+        existing = {"platforms": seed, "tags": TAG_DEFAULTS,
+                    "tag_candidates": TAG_CANDIDATES,
+                    "generated": {"no_target_reviewed": NO_TARGET_REVIEWED,
+                                  "corrections": CORRECTIONS}}
+    previous = copy.deepcopy(existing)
     by_id = {}
     for system in systems:
         try:
@@ -364,100 +454,73 @@ def build_catalog(systems: list[dict], cht_dirs: list[str],
         except (TypeError, ValueError):
             continue
         if ss_id > 0:
+            if ss_id in by_id:
+                raise GeneratorError(f"upstream repeats ScreenScraper ID {ss_id}")
             by_id[ss_id] = system
 
-    missing = sorted(set(IDENTITY) - set(by_id))
+    registry = {}
+    used = set()
+    for platform in previous["platforms"]:
+        pid = platform["id"]
+        ss_id = platform.get("ss_id")
+        if pid in used or (ss_id is not None and ss_id in registry):
+            raise GeneratorError(f"ambiguous existing identity: {pid}")
+        used.add(pid)
+        if ss_id is not None:
+            registry[ss_id] = platform
+    missing = sorted(set(registry) - set(by_id))
     if missing:
-        raise GeneratorError(
-            "reviewed ScreenScraper IDs are absent from the imported list: "
-            f"{missing}. Upstream removals are reported, never silently dropped")
-
-    available = set(cht_dirs)
-    unknown_dirs = {pid: directory for pid, directory in LIBRETRO_BINDINGS.items()
-                    if directory not in available}
-    if unknown_dirs:
-        raise GeneratorError(
-            "reviewed cheat directories are absent from the imported "
-            f"inventory: {unknown_dirs}")
-
-    slugs: dict[int, str] = dict((k, v[0]) for k, v in IDENTITY.items())
-    used = {}
-    for ss_id, slug in slugs.items():
-        if slug in used:
-            raise GeneratorError(
-                f"reviewed slug '{slug}' is claimed by ScreenScraper IDs "
-                f"{used[slug]} and {ss_id}")
-        used[slug] = ss_id
+        raise GeneratorError(f"existing ScreenScraper IDs are absent upstream: {missing}; "
+                             "the published identities were not removed")
+    bindings = {p["id"]: p["libretro_dir"] for p in previous["platforms"]
+                if p.get("libretro_dir")}
+    missing_dirs = {pid: directory for pid, directory in bindings.items()
+                    if directory not in cht_dirs}
+    if missing_dirs:
+        raise GeneratorError(f"reviewed cheat directories are absent upstream: {missing_dirs}")
 
     platforms = []
-    disambiguated: list[tuple[str, str, int]] = []
-    for ss_id in sorted(by_id):
-        system = by_id[ss_id]
+    for ss_id, system in sorted(by_id.items()):
         name, aliases = platform_names(system)
-        if ss_id in IDENTITY:
-            slug, name = IDENTITY[ss_id][0], IDENTITY[ss_id][1]
-            upstream, _ = platform_names(system)
-            if upstream and upstream != name and upstream not in aliases:
-                aliases.insert(0, upstream)
+        if ss_id in registry:
+            entry = copy.deepcopy(registry[ss_id])
+            # Keep reviewed names and synonyms; add upstream renames for search.
+            names = (entry.get("aliases") or []) + [n for n in [name] + aliases
+                                                if n and n != entry["name"]]
+            entry["aliases"] = list(dict.fromkeys(names))
         else:
             if not name:
-                continue
+                raise GeneratorError(f"ScreenScraper {ss_id} has no platform name")
             slug = propose_slug(name)
             if slug in used:
-                # Deterministic and permanent, but a review item: a reviewer
-                # can promote a readable slug into IDENTITY, and existing
-                # overrides keep resolving either way because the ss_id ->
-                # slug association is what is preserved.
-                slug = f"{slug}-{ss_id}"
-                disambiguated.append((slug, name, ss_id))
-            if slug in used:
-                raise GeneratorError(
-                    f"slug '{slug}' for ScreenScraper {ss_id} still collides "
-                    f"with {used[slug]}; assign a reviewed slug in IDENTITY")
-            used[slug] = ss_id
-
-        entry = {"id": slug, "name": name, "ss_id": ss_id}
-        if aliases:
-            entry["aliases"] = aliases[:12]
-        directory = LIBRETRO_BINDINGS.get(slug)
-        if directory:
-            entry["libretro_dir"] = directory
-        unavailable = VERIFIED_UNAVAILABLE.get(slug)
-        if unavailable:
-            entry["verified_unavailable"] = unavailable
+                raise GeneratorError(f"new platform {ss_id} collides with {slug!r}; "
+                                     "assign a reviewed ID in the catalog first")
+            used.add(slug)
+            entry = {"id": slug, "name": name, "ss_id": ss_id}
+            if aliases:
+                entry["aliases"] = aliases
         platforms.append(entry)
+    platforms.extend(p for p in previous["platforms"] if p.get("ss_id") is None)
 
-    known = {entry["id"] for entry in platforms}
-    for tag, pid in TAG_DEFAULTS.items():
+    known = {p["id"] for p in platforms}
+    for tag, pid in (previous.get("tags") or {}).items():
         if pid not in known:
             raise GeneratorError(f"suffix default {tag} -> {pid} has no platform")
-    for tag, ids in TAG_CANDIDATES.items():
-        for pid in ids:
-            if pid not in known:
-                raise GeneratorError(f"suffix candidate {tag} -> {pid} has no platform")
+    for tag, ids in (previous.get("tag_candidates") or {}).items():
+        if any(pid not in known for pid in ids):
+            raise GeneratorError(f"suffix candidate {tag} has no platform")
 
-    bound = set(LIBRETRO_BINDINGS.values())
-    return {
-        "schema": 1,
-        "generated": {
-            "generator": "scripts/gen_systems_catalog.py",
-            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "screenscraper_systems": len(by_id),
-            "screenscraper_sha256": ss_digest,
-            "libretro_database_commit": cht_commit,
-            "libretro_cht_directories": len(cht_dirs),
-            "libretro_cht_unbound": sorted(set(cht_dirs) - bound),
-            "auto_disambiguated_slugs": [
-                {"id": slug, "name": name, "ss_id": ss_id}
-                for slug, name, ss_id in disambiguated
-            ],
-            "no_target_reviewed": NO_TARGET_REVIEWED,
-            "corrections": CORRECTIONS,
-        },
-        "platforms": platforms,
-        "tags": dict(sorted(TAG_DEFAULTS.items())),
-        "tag_candidates": {k: list(v) for k, v in sorted(TAG_CANDIDATES.items())},
-    }
+    generated = previous.get("generated", {})
+    generated.update({
+        "generator": "scripts/gen_systems_catalog.py",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "screenscraper_systems": len(by_id),
+        "screenscraper_sha256": ss_digest,
+        "libretro_database_commit": cht_commit,
+        "libretro_cht_directories": len(cht_dirs),
+        "libretro_cht_unbound": sorted(set(cht_dirs) - set(bindings.values())),
+    })
+    return {**previous, "schema": 1, "generated": generated, "platforms": platforms}
 
 
 # ── Baseline comparison ───────────────────────────────────────
@@ -509,7 +572,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         systems, ss_digest = fetch_screenscraper()
         cht_dirs, cht_commit = fetch_libretro_cht()
-        catalog = build_catalog(systems, cht_dirs, ss_digest, cht_commit)
+        existing = read_catalog(CATALOG_PATH) if CATALOG_PATH.exists() else None
+        catalog = build_catalog(systems, cht_dirs, ss_digest, cht_commit, existing)
     except GeneratorError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -525,15 +589,21 @@ def main(argv: list[str] | None = None) -> int:
 
     body = json.dumps(catalog, indent=2, ensure_ascii=False) + "\n"
     destination = Path(args.output) if args.output else CATALOG_PATH
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(body, encoding="utf-8")
-
-    auto = catalog["generated"]["auto_disambiguated_slugs"]
-    if auto:
-        print(f"note: {len(auto)} platform id(s) were disambiguated "
-              "automatically; promote readable slugs into IDENTITY if any of "
-              "them ever needs one: "
-              + ", ".join(a["id"] for a in auto), file=sys.stderr)
+    candidate = None
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                                         dir=destination.parent, delete=False) as output:
+            candidate = Path(output.name)
+            output.write(body)
+        read_catalog(candidate)
+        candidate.replace(destination)
+    except (OSError, GeneratorError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        if candidate:
+            candidate.unlink(missing_ok=True)
 
     print(f"wrote {destination} "
           f"({len(catalog['platforms'])} platforms, "

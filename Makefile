@@ -52,7 +52,7 @@ endif
 .PHONY: all native mac run-mac run-native universal tg5040 tg5050 my355 \
 	package package-universal package-matrix package-tg5040 package-tg5050 package-my355 do-package \
 	deploy deploy-platform clean clean-all help check-credentials \
-	audit-systems audit-systems-inventory test-systems test-scripts test \
+	audit-systems audit-systems-inventory test-systems test-scripts test-queue test setup-mock-sdcard \
 	build-git-static clean-git-static update-apostrophe \
 	setup-nextui-preview-cache clean-nextui-preview-cache
 
@@ -278,7 +278,20 @@ deploy-platform:
 
 # ── Tests ───────────────────────────────────────────────────
 
-test: test-systems test-scripts
+test: test-systems test-scripts test-queue
+
+setup-mock-sdcard:
+	@python3 scripts/setup_mock_sdcard.py
+
+test-queue: $(APOSTROPHE_DIR)/include/apostrophe.h
+	@mkdir -p $(BUILD_DIR)/tests
+	cc -std=gnu11 -O0 -g -DPLATFORM_MAC -Isrc $(COMMON_INCLUDES) \
+		$(shell pkg-config --cflags sdl2 SDL2_ttf SDL2_image libcurl) \
+		-o $(BUILD_DIR)/tests/test_queue tests/test_queue.c \
+		src/cheats.c src/device.c src/screenscraper.c src/systems.c \
+		third_party/cJSON/cJSON.c third_party/md5/md5.c $(wildcard third_party/miniz/*.c) \
+		$(shell pkg-config --libs sdl2 SDL2_ttf SDL2_image libcurl) -lm -lpthread
+	@./$(BUILD_DIR)/tests/test_queue
 
 test-scripts:
 	@python3 -m unittest discover -s tests -p 'test_*.py'
@@ -338,6 +351,8 @@ help:
 	@echo "  test          Run the runnable regression checks"
 	@echo "  test-systems  Check catalog resolution, keys and failure handling"
 	@echo "  test-scripts  Check the audit and catalog generator offline"
+	@echo "  test-queue    Check captured provider targets and daemon persistence offline"
+	@echo "  setup-mock-sdcard  Add five GPGX folders with non-playable UI fixtures"
 	@echo "  audit-systems  Audit suffix inventory and catalog coverage (NEXTUI_REPO=$(NEXTUI_REPO))"
 	@echo "  audit-systems-inventory  Discovery only; does not evaluate coverage"
 	@echo "  clean         Remove build artifacts"

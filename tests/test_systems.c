@@ -318,6 +318,54 @@ static void test_folder_keys(void) {
     check(systems_folder_key(path, buf, sizeof(buf))
           && strcmp(buf, "Mega Drive (GPGX).disabled") == 0,
           "the .disabled suffix is part of the key, got \"%s\"", buf);
+
+    snprintf(path, sizeof(path), "%s/Mega Drive (GPGX)/../Master System (GPGX)", roms_root);
+    check(!systems_folder_key(path, buf, sizeof(buf)),
+          "traversal into an existing folder is rejected");
+    snprintf(path, sizeof(path), "%s/./Mega Drive (GPGX)", roms_root);
+    check(!systems_folder_key(path, buf, sizeof(buf)), "dot components are rejected");
+
+    char cwd[PATH_MAX];
+    getcwd(cwd, sizeof(cwd));
+    snprintf(path, sizeof(path), "%s/Alias (GPGX)", roms_root);
+    check(symlink("Mega Drive (GPGX)", path) == 0, "create a named symlink fixture");
+    chdir(sd_root);
+    check(systems_folder_key("Roms/Alias (GPGX)", buf, sizeof(buf))
+          && strcmp(buf, "Alias (GPGX)") == 0,
+          "relative console paths retain the symlink's name");
+    check(systems_set_folder_platform("Roms/Alias (GPGX)", "gamegear") == 0,
+          "the alias can carry its own mapping");
+    check(systems_set_folder_hidden("Roms/Alias (GPGX)", true) == 0,
+          "the alias can be hidden independently");
+    check(!systems_resolve("Roms/Mega Drive (GPGX)", "GPGX").hidden,
+          "hiding the alias does not hide its target");
+    chdir(cwd);
+}
+
+static void test_gpgx_examples(void) {
+    section("all five GPGX folders can select independent targets");
+    const char *names[] = {"Mega Drive", "Master System", "Game Gear", "SG-1000", "Mega CD"};
+    const char *ids[] = {"megadrive", "mastersystem", "gamegear", "sg1000", "segacd"};
+    const char *dirs[] = {"Sega - Mega Drive - Genesis", "Sega - Master System - Mark III",
+                         "Sega - Game Gear", "Sega - SG-1000", "Sega - Mega-CD - Sega CD"};
+    for (int i = 0; i < 5; i++) {
+        char path[PATH_MAX];
+        snprintf(path, sizeof(path), "%s/%s (GPGX)", roms_root, names[i]);
+        make_dir(path);
+        check(!systems_resolve(path, "GPGX").platform, "%s starts unmapped", names[i]);
+        check(systems_set_folder_platform(path, ids[i]) == 0, "%s mapping saves", names[i]);
+    }
+    systems_shutdown();
+    check(systems_init() == 0, "all five folder choices survive restart");
+    for (int i = 0; i < 5; i++) {
+        char path[PATH_MAX];
+        snprintf(path, sizeof(path), "%s/%s (GPGX)", roms_root, names[i]);
+        sg_mapping m = systems_resolve(path, "GPGX");
+        check(m.platform && strcmp(m.platform->id, ids[i]) == 0
+              && m.platform->libretro_dir && strcmp(m.platform->libretro_dir, dirs[i]) == 0,
+              "%s retains its provider target", names[i]);
+        check(systems_set_folder_platform(path, NULL) == 0, "clear the test choice");
+    }
 }
 
 static void test_rename_behaviour(void) {
@@ -432,6 +480,49 @@ static void test_invalid_data(void) {
           "a folder outside Roms/ cannot carry a mapping");
 }
 
+static void test_rejected_data_preserved(void) {
+    section("malformed fields are warned about and preserved before saving");
+    const char *bad[] = {
+        "{\"schema\":1,\"tags\":{\"GB\":\"gameboy\"},\"tags\":{\"GB\":\"megadrive\"}}",
+        "{\"schema\":1,\"folders\":{\"Mega Drive (GPGX)\":{\"platform\":\"megadrive\",\"platform\":\"gamegear\"}}}",
+        "{\"schema\":1,\"folders\":{\"Mega Drive (GPGX)\":{\"platform\":\"megadrive\",\"hidden\":\"true\"}}}",
+        "{\"schema\":1.5,\"tags\":{}}",
+        "{\"schema\":1,\"tags\":{}} trailing garbage",
+    };
+    char path[PATH_MAX], backup[PATH_MAX], tmp[PATH_MAX];
+    get_system_overrides_path(path, sizeof(path));
+    snprintf(backup, sizeof(backup), "%s.rejected", path);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        systems_shutdown();
+        remove_overrides();
+        write_overrides(bad[i]);
+        check(systems_init() == 0 && systems_warning(), "bad override %zu warns", i);
+        check(systems_set_tag("TEST", "megadrive") == 0, "save recovered override %zu", i);
+        char *saved = slurp(backup);
+        check(saved && strcmp(saved, bad[i]) == 0, "backup %zu preserves exact rejected data", i);
+        free(saved);
+    }
+
+    check(mkdir(tmp, 0700) == 0, "block the temporary output path");
+    check(systems_set_tag("TEST", "gamegear") != 0, "failed write is reported");
+    check(strcmp(systems_resolve(NULL, "TEST").platform->id, "megadrive") == 0,
+          "failed writes keep the effective mapping");
+    rmdir(tmp);
+
+    systems_shutdown();
+    remove_overrides();
+    write_overrides(bad[0]);
+    mkdir(backup, 0700);
+    check(systems_init() == 0 && systems_warning(), "load rejected data for failed backup");
+    check(systems_set_tag("TEST", "gamegear") != 0, "failed backup blocks a save");
+    char *original = slurp(path);
+    check(original && strcmp(original, bad[0]) == 0, "failed backup leaves original intact");
+    check(!systems_resolve(NULL, "TEST").platform, "failed backup does not publish mappings");
+    free(original);
+    rmdir(backup);
+}
+
 /* A platform can carry one provider and not the other. The resolver must not
  * treat a missing ScreenScraper id as "unsupported everywhere". */
 static void test_synthetic_catalog(const char *fixture) {
@@ -486,8 +577,26 @@ static void test_explicit_catalog_path(void) {
           "the error names the path that was tried");
     check(systems_platform_count() == 0, "nothing is loaded after the failure");
 
+    setenv("SCRAPEGOAT_SYSTEMS_JSON", "", 1);
+    check(systems_init() != 0, "an empty explicit path never falls back");
+
     char broken[PATH_MAX];
     snprintf(broken, sizeof(broken), "%s/broken.json", sd_root);
+    const char *bad[] = {
+        "{\"schema\":1.5,\"platforms\":[{\"id\":\"a\",\"name\":\"A\"}]}",
+        "{\"schema\":1,\"platforms\":[{\"id\":\"a\",\"name\":\"A\"}]} garbage",
+        "{\"schema\":1,\"platforms\":[{\"id\":\"a\",\"name\":\"A\",\"ss_id\":1,\"ss_id\":2}]}",
+        "{\"schema\":1,\"platforms\":[{\"id\":\"a\",\"name\":\"A\",\"ss_id\":1e100}]}",
+        "{\"schema\":1,\"platforms\":[{\"id\":\"a\",\"name\":\"A\",\"aliases\":[42]}]}",
+    };
+    setenv("SCRAPEGOAT_SYSTEMS_JSON", broken, 1);
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        FILE *f = fopen(broken, "w");
+        fputs(bad[i], f);
+        fclose(f);
+        check(systems_init() != 0 && systems_platform_count() == 0,
+              "malformed catalog %zu fails all-or-nothing", i);
+    }
     FILE *f = fopen(broken, "w");
     fputs("{\"schema\":1,\"platforms\":[{\"id\":\"a\",\"name\":\"A\"}],"
           "\"tags\":{\"X\":\"missing\"}}", f);
@@ -549,6 +658,7 @@ int main(int argc, char *argv[]) {
     }
 
     test_baseline_parity(fixture);
+    test_gpgx_examples();
     test_folder_scoping();
     test_visibility();
     test_provider_independence();
@@ -556,6 +666,7 @@ int main(int argc, char *argv[]) {
     test_rename_behaviour();
     test_sd_root_change();
     test_invalid_data();
+    test_rejected_data_preserved();
 
     char synthetic[PATH_MAX];
     if (fixture[0] == '/')

@@ -871,7 +871,13 @@
         "c64",
         "Commodore 128",
         "C64"
-      ]
+      ],
+      "verified_unavailable": [
+        "libretro_dir"
+      ],
+      "provider_evidence": {
+        "libretro_dir": "Reviewed all 45 cht/ directories at the pinned libretro snapshot on 2026-09-10: no Commodore 64 cheat database is present. https://github.com/libretro/libretro-database/tree/ff28a5e5bca21f7ae2001602d2e0585cf66c9b5c/cht"
+      }
     },
     {
       "id": "supercassettevision",

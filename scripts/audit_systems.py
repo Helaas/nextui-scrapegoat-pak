@@ -33,6 +33,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gen_systems_catalog import GeneratorError, read_catalog
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CATALOG_PATH = REPO_ROOT / "resources" / "systems.json"
 COVERAGE_REPORT = REPO_ROOT / "SYSTEMS.md"
@@ -93,6 +95,102 @@ PAK_EVIDENCE: dict[str, dict] = {
             "directory name, so the two are distinct suffixes, not spellings. "
             "https://github.com/laesetuc/minui-scummvm/blob/f60d7bad2ce1/README.md"),
     },
+    '9duidHBqAk': {'storefront_version': 'v1.0.0',
+                    'source_commit': 'b2ef7fdcb19eb94e3ff3dc4a03d6cfc959aaf7a6',
+                    'tags': ['GPGX'],
+                    'devices': ['tg5040', 'tg5050', 'my355'],
+                    'reasoning': 'Reviewed the complete assemble_pak and package recipes at the '
+                                 'release commit: launch.sh and the core enter GPGX.pak, then a clean '
+                                 'staging directory receives only Emus/tg5040/GPGX.pak, '
+                                 'Emus/tg5050/GPGX.pak and Emus/my355/GPGX.pak before zip creates '
+                                 'GPGX.pakz. Device repetitions are one suffix. Source packaging '
+                                 'evidence; the asset was not downloaded. '
+                                 'https://github.com/Helaas/nextui-gppx-pak/blob/b2ef7fdcb19eb94e3ff3dc4a03d6cfc959aaf7a6/Makefile'},
+     'gQ7hT4dK9c': {'storefront_version': '2.14.0',
+                    'source_commit': 'a0f7d82ae6e571a2093fd816476aa513e3529bfd',
+                    'tags': ['PORTS'],
+                    'devices': ['tg5040'],
+                    'reasoning': 'Reviewed release-pakz: it clears /tmp/pakz-build, archives HEAD into '
+                                 'Emus/tg5040/PORTS.pak, copies generated dependencies inside that '
+                                 'pak, adds Roms/Ports (PORTS), and zips the entire staging directory. '
+                                 'PAK_NAME comes from the release pak.json and PAK_DIR is Emus/tg5040. '
+                                 'No second emulator suffix is assembled. Source packaging evidence; '
+                                 'the asset was not downloaded. '
+                                 'https://github.com/ben16w/minui-portmaster/blob/a0f7d82ae6e571a2093fd816476aa513e3529bfd/Makefile'},
+     '2J5vkdSppU': {'storefront_version': 'v1.0.0',
+                    'source_commit': 'a32e8926009ce35ab2c7113908d74a3c1dbbc018',
+                    'tags': ['GW'],
+                    'devices': ['tg5040'],
+                    'reasoning': 'Inspected the advertised release archive on 2026-09-10 (SHA-256 '
+                                 'f162102b5347e6fec96260f1f8b5c9e7ccf63ede1dd7d923be0cddc72d554331). '
+                                 'Every emulator launch.sh is under Emus/<device>/GW.pak for the '
+                                 'listed devices; no other emulator pak is present. This is an SD-root '
+                                 'layout. '
+                                 'https://github.com/pawndev/Game-Watch-NextUI/releases/download/v1.0.0/GW.pakz'},
+     '23hbrUZWLY': {'storefront_version': 'v1.0.0',
+                    'source_commit': '00cfd674fd6bdf836c534f90ca9d31650e4c7eee',
+                    'tags': ['NEOCD'],
+                    'devices': ['tg5040', 'my355', 'h700'],
+                    'reasoning': 'Inspected the advertised release archive on 2026-09-10 (SHA-256 '
+                                 '776b7814f7480e0f7951c9b3e13d96babed59921fcf37cd5ca6798c261b6ddc9). '
+                                 'Every emulator launch.sh is under Emus/<device>/NEOCD.pak for the '
+                                 'listed devices; no other emulator pak is present. This is an SD-root '
+                                 'layout. '
+                                 'https://github.com/tsolfan/neocd_libretro-nextui/releases/download/v1.0.0/NEOCD.pak.zip',
+                    'installation_issue': 'The verified NEOCD.pak.zip contains an SD-root '
+                                          'Emus/<device>/NEOCD.pak layout, but its .pak.zip storefront '
+                                          'filename selects extraction below Emus/<device>/NEOCD.pak. '
+                                          'The pinned Pak Store extractor preserves the nested paths, '
+                                          'leaving no launch.sh at the expected location. Manual '
+                                          'extraction at the SD root works; the advertised store '
+                                          'package needs an upstream filename/layout correction. '
+                                          'https://github.com/LoveRetro/nextui-pak-store/blob/d234b873/utils/functions.go#L220'},
+     'FxBRHBO4mo': {'storefront_version': 'v1.0.0',
+                    'source_commit': 'c957aab65b983c2ece61234ad3f41eb6281188c8',
+                    'tags': ['O2'],
+                    'devices': ['tg5040', 'my355', 'h700'],
+                    'reasoning': 'Inspected the advertised release archive on 2026-09-10 (SHA-256 '
+                                 '1b15f6b7e79cdce6f66eef6663d08bec556c44ae010b94137346a06de9d4666f). '
+                                 'Every emulator launch.sh is under Emus/<device>/O2.pak for the '
+                                 'listed devices; no other emulator pak is present. This is an SD-root '
+                                 'layout. '
+                                 'https://github.com/tsolfan/libretro-o2em-nextui/releases/download/v1.0.0/O2.pak.zip',
+                    'installation_issue': 'The verified O2.pak.zip contains an SD-root '
+                                          'Emus/<device>/O2.pak layout, but its .pak.zip storefront '
+                                          'filename selects extraction below Emus/<device>/O2.pak. The '
+                                          'pinned Pak Store extractor preserves the nested paths, '
+                                          'leaving no launch.sh at the expected location. Manual '
+                                          'extraction at the SD root works; the advertised store '
+                                          'package needs an upstream filename/layout correction. '
+                                          'https://github.com/LoveRetro/nextui-pak-store/blob/d234b873/utils/functions.go#L220'},
+     '8SdCQx7vgn': {'storefront_version': 'v1.0.0',
+                    'source_commit': 'db518a2c28e821f351dc585340c9b42e5e40b162',
+                    'tags': ['SGX'],
+                    'devices': ['tg5040', 'my355', 'h700'],
+                    'reasoning': 'Inspected the advertised release archive on 2026-09-10 (SHA-256 '
+                                 '13b9512829cce26e601ca640cfa9e39aebc1971728727e7757b1ba1ae5a2d8d2). '
+                                 'Every emulator launch.sh is under Emus/<device>/SGX.pak for the '
+                                 'listed devices; no other emulator pak is present. This is an SD-root '
+                                 'layout. '
+                                 'https://github.com/tsolfan/beetle-supergrafx-libretro-nextui/releases/download/v1.0.0/SGX.pak.zip',
+                    'installation_issue': 'The verified SGX.pak.zip contains an SD-root '
+                                          'Emus/<device>/SGX.pak layout, but its .pak.zip storefront '
+                                          'filename selects extraction below Emus/<device>/SGX.pak. '
+                                          'The pinned Pak Store extractor preserves the nested paths, '
+                                          'leaving no launch.sh at the expected location. Manual '
+                                          'extraction at the SD root works; the advertised store '
+                                          'package needs an upstream filename/layout correction. '
+                                          'https://github.com/LoveRetro/nextui-pak-store/blob/d234b873/utils/functions.go#L220'},
+     'qM2cH6zW1r': {'storefront_version': 'v1.0.0',
+                    'source_commit': '7d7519aad66f53a2013bfccaa42b897b8b0d4f46',
+                    'tags': ['ZQUEST'],
+                    'devices': ['tg5040'],
+                    'reasoning': 'Inspected the advertised release archive on 2026-09-10 (SHA-256 '
+                                 '11ed82bea3d41f60ae48cf56fcf051a87de04f972c935c9a2e7ef5feab07e468). '
+                                 'Every emulator launch.sh is under Emus/<device>/ZQUEST.pak for the '
+                                 'listed devices; no other emulator pak is present. This is an SD-root '
+                                 'layout. '
+                                 'https://github.com/cobaltgit/Zelda-Classic-MinUI/releases/download/v1.0.0/ZQUEST.pakz'},
 }
 
 # ── Reviewed suffix meaning ───────────────────────────────────
@@ -488,7 +586,7 @@ def scan_nextui(repo: Path, problems: Problems) -> tuple[list[PakSighting], dict
             has_launch = launch.is_file()
             core = launch_core(launch) if has_launch else None
             if not has_launch:
-                problems.add(NOTE, f"NextUI {tag}",
+                problems.add(INCOMPLETE, f"NextUI {tag}",
                              f"{pak.relative_to(repo)} has no launch.sh; "
                              "reported as an incomplete pak layout, not a "
                              "working emulator")
@@ -734,22 +832,21 @@ def _resolve_github(entry: StoreEntry, owner: str, repo: str,
     slug = f"{owner}/{repo}@{entry.commit[:12]} ({entry.tag_name})"
     entry.pak_json_name = _read_pak_json_name(entry, owner, repo, paths, fetcher)
 
-    # Tier A: pak directories committed at the resolved commit.
+    # Source paths are candidates, not proof of the installed release layout.
+    # In particular, a pakz may add or omit paks while generating its archive.
     committed = pak_dirs_in_tree(paths)
     if committed:
         entry.tags = sorted(committed)
-        entry.tag_devices = {t: sorted(d) for t, d in sorted(committed.items())}
-        entry.evidence = "source-tree"
-        entry.evidence_detail = (
-            f"{slug} commits {len(entry.tags)} emulator pak director"
-            f"{'y' if len(entry.tags) == 1 else 'ies'}")
-        return
-
+        entry.tag_devices = {t: sorted(d) for t, d in committed.items()}
     if entry.is_pakz:
-        # Tier B: a .pakz extracts at the SD root, so only the archive layout
-        # decides. With no committed layout, the packaging rule is the evidence.
-        _resolve_from_packaging_rule(entry, owner, repo, paths, slug,
-                                     fetcher, problems)
+        if committed:
+            entry.evidence_detail = (
+                f"{slug} contains source candidates {entry.tags}; the complete "
+                "release packaging needs version-bound manual evidence")
+        else:
+            _resolve_from_packaging_rule(entry, owner, repo, paths, slug,
+                                         fetcher, problems)
+        entry.evidence = "unresolved"
         return
 
     # Tier C: a plain .pak.zip is installed by the Pak Store into
@@ -841,12 +938,11 @@ def _resolve_from_packaging_rule(entry: StoreEntry, owner: str, repo: str,
     devices = sorted(set(PAK_DIR_DEVICE_RE.findall(makefile)) & KNOWN_DEVICES)
     entry.tags = [tag]
     entry.tag_devices = {tag: devices or sorted(entry.devices)}
-    entry.evidence = "packaging-rule"
+    entry.evidence = "unresolved"
     entry.evidence_detail = (
-        f"{slug} builds {entry.release_filename} with {derivation}, so the "
-        f"archive installs `{tag}.pak`. This is release-specific packaging "
-        "evidence read from the build rules, not a committed pak directory, "
-        "and the archive itself was not downloaded")
+        f"{slug} declares {derivation}, suggesting `{tag}.pak`; a variable "
+        "alone does not establish the complete installed layout. Review the "
+        "release packaging and record version-bound manual evidence")
 
 
 def _resolve_from_store_install_rule(entry: StoreEntry, slug: str,
@@ -900,7 +996,11 @@ def _apply_manual_evidence(entry: StoreEntry, evidence: dict,
                      f"{reviewed_version or '(none)'}, the storefront now "
                      f"advertises {entry.version}; re-review before relying on it")
         return
-    if entry.commit and reviewed_commit and not entry.commit.startswith(reviewed_commit):
+    if not entry.commit or not reviewed_commit:
+        problems.add(UNRESOLVED, subject,
+                     "manual packaging evidence needs a resolved source commit")
+        return
+    if not entry.commit.startswith(reviewed_commit):
         problems.add(STALE, subject,
                      f"reviewed evidence covers commit {reviewed_commit}, the "
                      f"advertised release resolves to {entry.commit[:12]}")
@@ -911,7 +1011,8 @@ def _apply_manual_evidence(entry: StoreEntry, evidence: dict,
         problems.add(UNRESOLVED, subject,
                      "manual evidence records no installed suffixes")
         return
-    if entry.tags and sorted(entry.tags) != sorted(reviewed_tags):
+    if (entry.evidence != "unresolved" and entry.tags
+            and sorted(entry.tags) != sorted(reviewed_tags)):
         problems.add(STALE, subject,
                      f"automatic evidence shows {sorted(entry.tags)} but the "
                      f"reviewed entry records {sorted(reviewed_tags)}; reconcile "
@@ -925,6 +1026,8 @@ def _apply_manual_evidence(entry: StoreEntry, evidence: dict,
     }
     entry.evidence = "reviewed"
     entry.evidence_detail = str(evidence.get("reasoning") or "manually reviewed")
+    if evidence.get("installation_issue"):
+        problems.add(GAP, subject, str(evidence["installation_issue"]))
 
 
 # ── Catalog ───────────────────────────────────────────────────
@@ -941,46 +1044,14 @@ class Catalog:
 
 
 def load_catalog(problems: Problems) -> Catalog | None:
-    if not CATALOG_PATH.is_file():
-        problems.add(INVALID, "catalog",
-                     f"{CATALOG_PATH.relative_to(REPO_ROOT)} does not exist. "
-                     "A missing catalog makes coverage unevaluated, not empty. "
-                     "Use --inventory-only for discovery before it is seeded")
-        return None
     try:
-        data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        problems.add(INVALID, "catalog", f"{CATALOG_PATH.name} is unreadable: {exc}")
+        data = read_catalog(CATALOG_PATH)
+    except GeneratorError as exc:
+        problems.add(INVALID, "catalog", str(exc))
         return None
-    if not isinstance(data, dict) or data.get("schema") != 1:
-        problems.add(INVALID, "catalog", "unsupported or missing schema")
-        return None
-
-    platforms: dict[str, dict] = {}
-    for platform in data.get("platforms") or []:
-        if not isinstance(platform, dict):
-            problems.add(INVALID, "catalog", "platform entry is not an object")
-            return None
-        pid = platform.get("id")
-        if not isinstance(pid, str) or not pid or pid in platforms:
-            problems.add(INVALID, "catalog", f"invalid or duplicate platform id {pid!r}")
-            return None
-        platforms[pid] = platform
-
-    tags = {k: v for k, v in (data.get("tags") or {}).items()}
-    candidates = {k: list(v) for k, v in (data.get("tag_candidates") or {}).items()}
-    for tag, pid in tags.items():
-        if pid not in platforms:
-            problems.add(INVALID, "catalog",
-                         f"tag default {tag} -> {pid} references an unknown platform")
-            return None
-    for tag, ids in candidates.items():
-        for pid in ids:
-            if pid not in platforms:
-                problems.add(INVALID, "catalog",
-                             f"tag candidate {tag} -> {pid} references an "
-                             "unknown platform")
-                return None
+    platforms = {p["id"]: p for p in data["platforms"]}
+    tags = data.get("tags") or {}
+    candidates = data.get("tag_candidates") or {}
     generated = data.get("generated")
     def string_map(key: str) -> dict[str, str]:
         if isinstance(generated, dict) and isinstance(generated.get(key), dict):
@@ -1091,10 +1162,22 @@ def build_rows(sightings: list[PakSighting], entries: list[StoreEntry],
                     problems.add(GAP, tag,
                                  "the catalog offers neither a default platform "
                                  "nor reviewed candidates")
-            screenscraper = provider_state(platform, "ss_id")
-            cheats = provider_state(platform, "libretro_dir")
-            if platform is None and candidate_ids:
-                screenscraper = cheats = PROVIDER_UNVERIFIED
+            targets = list(dict.fromkeys(([default_id] if default_id else [])
+                                          + candidate_ids))
+            coverage = {}
+            for key in ("ss_id", "libretro_dir"):
+                states = {pid: provider_state(catalog.platforms[pid], key)
+                          for pid in targets}
+                for pid, state in states.items():
+                    if state == PROVIDER_UNVERIFIED:
+                        problems.add(UNRESOLVED, tag,
+                                     f"{pid}: {key} coverage has not been verified")
+                values = set(states.values())
+                coverage[key] = (next(iter(values)) if len(values) == 1 else
+                                 "; ".join(f"{pid}: {state}" for pid, state in states.items())
+                                 if states else PROVIDER_UNVERIFIED)
+            screenscraper, cheats = coverage["ss_id"], coverage["libretro_dir"]
+
         else:
             screenscraper = cheats = "coverage not evaluated"
 
@@ -1249,6 +1332,15 @@ def render_report(rows: list[Row], problems: Problems, nextui_meta: dict,
             lines.append(f"- **`{tag}`** — {detail}")
         lines.append("")
 
+    if catalog:
+        evidence = [(pid, key, note) for pid, platform in catalog.platforms.items()
+                    for key, note in (platform.get("provider_evidence") or {}).items()]
+        if evidence:
+            lines.extend(["## Provider review evidence", ""])
+            for pid, key, note in sorted(evidence):
+                lines.append(f"- **{pid} / {key}** — {note}")
+            lines.append("")
+
     # Reviewed target meaning
     lines.append("## Reviewed target meaning")
     lines.append("")
@@ -1286,7 +1378,7 @@ def render_report(rows: list[Row], problems: Problems, nextui_meta: dict,
         ("Invalid catalog", (INVALID,)),
         ("Stale manual evidence", (STALE,)),
         ("Unresolved identity, target meaning or provider decisions", (UNRESOLVED,)),
-        ("Missing default or candidate decisions", (GAP,)),
+        ("Mapping or installation gaps", (GAP,)),
         ("Informational", (NOTE,)),
     ]
     lines.append("## Findings")
@@ -1311,7 +1403,8 @@ def render_report(rows: list[Row], problems: Problems, nextui_meta: dict,
     lines.append(f"  - from Pak Store emulator releases: {len(store_tags)} "
                  f"({len(store_tags - nextui_tags)} not in the skeleton)")
     lines.append(f"- Store releases with confirmed installed suffixes: "
-                 f"{sum(1 for e in entries if e.tags)} of {len(entries)}")
+                 f"{sum(1 for e in entries if e.tags and e.evidence != 'unresolved')} of {len(entries)}")
+    lines.append("  - Source/asset candidates remain listed above as unresolved until release packaging is reviewed.")
     lines.append(f"- Suffixes needing folder selection (multi-system): "
                  f"{sum(1 for r in rows if r.meaning.startswith('multi'))}")
     lines.append(f"- Suffixes reviewed as open-ended content: "
@@ -1326,7 +1419,7 @@ def render_report(rows: list[Row], problems: Problems, nextui_meta: dict,
                  f"{sum(1 for r in rows if r.cheats == PROVIDER_SUPPORTED)}")
     lines.append(f"- Incomplete sources: {problems.count(INCOMPLETE, INVALID, STALE)}")
     lines.append(f"- Unresolved decisions: {problems.count(UNRESOLVED)}")
-    lines.append(f"- Missing mapping decisions: {problems.count(GAP)}")
+    lines.append(f"- Mapping/installation gaps: {problems.count(GAP)}")
     lines.append("")
     lines.append("Recognising a suffix name is not coverage, and user overrides "
                  "on a device cannot close a catalog gap.")

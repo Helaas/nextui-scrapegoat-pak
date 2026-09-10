@@ -936,6 +936,14 @@ static bool show_mapping_picker(const console_dir *console, const char *tag) {
         char help[512];
         describe_mapping(&mapping, tag, help, sizeof(help));
         size_t used = strlen(help);
+        if (console) {
+            snprintf(help + used, sizeof(help) - used, "\n\nFolder: %s.%s%s",
+                     console->name,
+                     mapping.hidden ? " Hidden in ScrapeGoat." : "",
+                     console->is_disabled ? " Disabled by its folder name."
+                       : console->name[0] == '.' ? " Hidden by its folder name." : "");
+            used = strlen(help);
+        }
         snprintf(help + used, sizeof(help) - used,
                  "\n\nA folder's own choice always wins over a suffix default. "
                  "Not every platform has both artwork and cheats.%s",
@@ -2143,22 +2151,17 @@ static bool show_system_mappings_screen(void) {
 
         int capacity = console_count + systems_override_count() + 1;
         map_row *rows = malloc(sizeof(map_row) * (size_t)capacity);
-        char (*names)[512] = console_count > 0
-            ? malloc(sizeof(char[512]) * (size_t)console_count) : NULL;
-        char (*labels)[192] = malloc(sizeof(char[192]) * (size_t)capacity);
+        char (*labels)[512] = malloc(sizeof(char[512]) * (size_t)capacity);
         char (*meta)[48] = malloc(sizeof(char[48]) * (size_t)capacity);
-        if (!rows || !labels || !meta || (console_count > 0 && !names)) {
+        if (!rows || !labels || !meta) {
             show_error("Out of memory.");
-            free(consoles); free(rows); free(names); free(labels); free(meta);
+            free(consoles); free(rows); free(labels); free(meta);
             break;
         }
-        if (console_count > 0)
-            build_console_menu_names(consoles, console_count, names);
 
         int count = 0;
         rows[count].kind = MAP_ROW_SUFFIX_DEFAULTS;
-        snprintf(labels[count], 192, "Suffix defaults");
-        snprintf(meta[count], 48, "%d saved", 0);
+        snprintf(labels[count], 512, "Suffix defaults");
         count++;
 
         /* Unmapped folders first: those are the ones needing attention. */
@@ -2176,22 +2179,39 @@ static bool show_system_mappings_screen(void) {
                 snprintf(rows[count].tag, sizeof(rows[count].tag), "%s",
                          consoles[i].tag);
                 rows[count].key[0] = '\0';
-                snprintf(labels[count], 192, "%s", names[i]);
 
-                const char *source =
-                    mapping.source == MAPPING_USER_FOLDER ? "folder"
-                  : mapping.source == MAPPING_USER_TAG    ? "suffix"
-                  : mapping.source == MAPPING_BUILTIN     ? "bundled"
-                  : "";
-                if (mapping.hidden && mapping.platform)
-                    snprintf(meta[count], 48, "hidden · %s", mapping.platform->name);
-                else if (mapping.hidden)
-                    snprintf(meta[count], 48, "hidden · unmapped");
-                else if (mapping.platform)
-                    snprintf(meta[count], 48, "%s · %s", mapping.platform->name,
-                             source);
+                /* Keep suffixes when they carry useful context. Duplicate
+                 * names use the directory spelling; status covers .disabled. */
+                bool duplicate = false;
+                for (int j = 0; j < console_count; j++) {
+                    if (j != i && strcmp(consoles[i].display,
+                                         consoles[j].display) == 0) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                const sg_platform *candidates[2];
+                if (duplicate)
+                    snprintf(labels[count], 512, "%.*s",
+                             (int)strlen(consoles[i].name)
+                               - (consoles[i].is_disabled ? 9 : 0),
+                             consoles[i].name);
+                else if (systems_tag_candidates(consoles[i].tag, candidates, 2) > 1)
+                    snprintf(labels[count], 512, "%s (%s)", consoles[i].display,
+                             consoles[i].tag);
                 else
-                    snprintf(meta[count], 48, "unmapped");
+                    snprintf(labels[count], 512, "%s", consoles[i].display);
+
+                /* One short exception per row; the picker holds the platform,
+                 * source and provider details. Visibility takes precedence. */
+                const char *status =
+                    consoles[i].is_disabled ? "Disabled"
+                  : mapping.hidden || consoles[i].name[0] == '.' ? "Hidden"
+                  : unmapped ? "Unmapped"
+                  : mapping.source == MAPPING_USER_FOLDER
+                    || mapping.source == MAPPING_USER_TAG ? "Custom"
+                  : "";
+                snprintf(meta[count], 48, "%s", status);
                 count++;
             }
         }
@@ -2224,15 +2244,17 @@ static bool show_system_mappings_screen(void) {
             rows[count].unmapped = false;
             snprintf(rows[count].key, sizeof(rows[count].key), "%s", ov.key);
             tag_from_key(ov.key, rows[count].tag, sizeof(rows[count].tag));
-            snprintf(labels[count], 192, "%s", ov.key);
-            snprintf(meta[count], 48, "folder missing");
+            snprintf(labels[count], 512, "%s", ov.key);
+            snprintf(meta[count], 48, "Missing");
             count++;
         }
-        snprintf(meta[0], 48, "%d saved", saved_suffix_defaults);
+        meta[0][0] = '\0';
+        if (saved_suffix_defaults > 0)
+            snprintf(meta[0], 48, "%d saved", saved_suffix_defaults);
 
         ap_list_item *items = calloc((size_t)count, sizeof(ap_list_item));
         if (!items) {
-            free(consoles); free(rows); free(names); free(labels); free(meta);
+            free(consoles); free(rows); free(labels); free(meta);
             break;
         }
         for (int i = 0; i < count; i++) {
@@ -2249,9 +2271,11 @@ static bool show_system_mappings_screen(void) {
         opts.footer_count = 2;
         opts.status_bar = &g_status_bar;
         opts.help_text =
-            "Choose what each ROM folder holds. A folder with no platform is "
-            "listed first; scraping it needs a choice here. Hiding a folder "
-            "removes it from the library only, and keeps its platform.";
+            "Unmapped folders are listed first and need a platform choice. "
+            "Custom means you chose a folder mapping or suffix default. "
+            "Hidden and Disabled show visibility restrictions.\n\n"
+            "Press A to edit, then Menu for the platform, mapping source and "
+            "provider details.";
         opts.initial_index = initial_idx < count ? initial_idx : 0;
         opts.visible_start_index = visible_start;
 
@@ -2291,7 +2315,6 @@ static bool show_system_mappings_screen(void) {
          * the folders and overrides this pass was built from. */
         free(consoles);
         free(rows);
-        free(names);
         free(labels);
         free(meta);
         if (cancelled)

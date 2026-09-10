@@ -236,14 +236,24 @@ static int deserialize_queue(const char *path, queue_item *out, int max_items) {
             snprintf(it->console_path, sizeof(it->console_path), "%s", v->valuestring);
         if ((v = cJSON_GetObjectItem(obj, "system_id")) && cJSON_IsNumber(v))
             it->system_id = (int)v->valuedouble;
-        if ((v = cJSON_GetObjectItem(obj, "cheat_dir")) && cJSON_IsString(v))
-            snprintf(it->cheat_dir, sizeof(it->cheat_dir), "%s", v->valuestring);
+        bool invalid_cheat_dir = false;
+        if ((v = cJSON_GetObjectItem(obj, "cheat_dir"))) {
+            invalid_cheat_dir = !cJSON_IsString(v)
+                || (v->valuestring[0] && !systems_valid_provider_dir(v->valuestring));
+            if (!invalid_cheat_dir)
+                snprintf(it->cheat_dir, sizeof(it->cheat_dir), "%s", v->valuestring);
+        }
         if ((v = cJSON_GetObjectItem(obj, "status")) && cJSON_IsString(v))
             it->status = str_to_status(v->valuestring);
         if ((v = cJSON_GetObjectItem(obj, "error_msg")) && cJSON_IsString(v))
             snprintf(it->error_msg, sizeof(it->error_msg), "%s", v->valuestring);
         if ((v = cJSON_GetObjectItem(obj, "force")) && cJSON_IsBool(v))
             it->force = cJSON_IsTrue(v);
+        if (it->type == QUEUE_TYPE_CHEAT && invalid_cheat_dir) {
+            it->status = QUEUE_ERROR;
+            snprintf(it->error_msg, sizeof(it->error_msg),
+                     "Saved cheat database name is invalid");
+        }
     }
 
     cJSON_Delete(arr);

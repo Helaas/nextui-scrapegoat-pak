@@ -88,6 +88,9 @@ int systems_platform_count(void);
 const sg_platform *systems_platform_at(int index);
 const sg_platform *systems_platform_by_id(const char *id);
 
+/* Shared by catalog loading and queue restore; no catalog lookup is needed. */
+bool systems_valid_provider_dir(const char *dir);
+
 /* Reviewed candidates for a suffix. Returns the number written. */
 int systems_tag_candidates(const char *tag, const sg_platform **out, int max);
 

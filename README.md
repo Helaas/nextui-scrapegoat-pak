@@ -224,6 +224,12 @@ has no bundled default, so clearing everything leaves the folder unmapped again.
 Your choices live in `/mnt/SDCARD/.userdata/shared/ScrapeGoat/system_overrides.json`,
 separate from the shipped catalog, so a pak update never overwrites them.
 
+For Mac UI testing, run `make setup-mock-sdcard` to add five folders sharing
+`GPGX` under `mock_sdcard/Roms/`: Mega Drive, Master System, Game Gear, SG-1000,
+and Mega CD. Each contains a distinct, non-playable placeholder ROM so it appears
+in the library even with empty folders excluded. The setup preserves existing
+files and saved mappings; choose each folder's platform in the mapping picker.
+
 ### Hiding a folder
 
 **Hide this folder** removes a folder from the library without forgetting its platform, and
